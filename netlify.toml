@@ -1,4 +1,9 @@
+[build]
+  # Указываем Netlify, что твои серверные функции лежат в папке api
+  functions = "api"
+
 [[redirects]]
+  # Перенаправляем стандартные запросы фронтенда в функции Netlify
   from = "/api/*"
   to = "/.netlify/functions/:splat"
   status = 200
