@@ -1,0 +1,9 @@
+{
+  "name": "freebies-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Freebies AI Assistant — static frontend + Vercel serverless API proxy",
+  "scripts": {
+    "dev": "vercel dev"
+  }
+}
