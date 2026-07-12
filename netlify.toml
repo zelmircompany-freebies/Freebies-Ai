@@ -1,9 +1,10 @@
 [build]
-  # Указываем Netlify, что твои серверные функции лежат в папке api
   functions = "api"
 
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
 [[redirects]]
-  # Перенаправляем стандартные запросы фронтенда в функции Netlify
   from = "/api/*"
   to = "/.netlify/functions/:splat"
   status = 200
