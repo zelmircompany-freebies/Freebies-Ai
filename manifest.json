@@ -1,6 +1,6 @@
 {
   "background_color": "#ffffff",
-  "description": "Free &amp; unlimited AI video &amp; image generator, text-to-video, text-to-image, image-to-video, image-to-image, AI agents, coder — all in one place. No limits, no subscriptions.",
+  "description": "Free & unlimited AI video & image generator, text-to-video, text-to-image, image-to-video, image-to-image, AI agents, coder — all in one place. No limits, no subscriptions.",
   "dir": "ltr",
   "display": "standalone",
   "name": "Freebies Ai",
@@ -13,47 +13,19 @@
     {
       "src": "https://www.freebies-ai.site/favicon.png",
       "type": "image/png",
-      "sizes": "512x512",
-      "isSquare": true,
-      "isPng": true,
-      "isWebp": false,
-      "isJpg": false,
-      "width": 512,
-      "is512x512": true,
-      "is256x256": false,
-      "is192x192": false
-    },
-    {
-      "src": "https://www.freebies-ai.site/favicon-1.ico",
-      "type": "image/x-icon",
-      "isSquare": false,
-      "isPng": false,
-      "isWebp": false,
-      "isJpg": false,
-      "width": 0,
-      "is512x512": false,
-      "is256x256": false,
-      "is192x192": false
+      "sizes": "512x512"
     },
     {
       "src": "https://www.freebies-ai.site/favicon-32.png",
       "type": "image/png",
-      "sizes": "32x32",
-      "isSquare": true,
-      "isPng": true,
-      "isWebp": false,
-      "isJpg": false,
-      "width": 32,
-      "is512x512": false,
-      "is256x256": false,
-      "is192x192": false
+      "sizes": "32x32"
     }
   ],
   "id": "freebies-ai-app",
   "categories": [
     "network",
     "photo",
-    "photo &amp; video",
+    "photo & video",
     "social",
     "video"
   ]
