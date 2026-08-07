@@ -1,5 +1,5 @@
 [[redirects]]
   from = "/*"
-  to = "https://your-app.vercel.app/:splat"
+  to = "https://freebies-ai.vercel.app/:splat"
   status = 200
   force = true
