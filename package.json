@@ -2,8 +2,11 @@
   "name": "freebies-ai",
   "version": "1.0.0",
   "private": true,
-  "description": "Freebies AI Assistant — static frontend + Vercel serverless API proxy",
+  "description": "Freebies AI Assistant with unlimited generation",
   "scripts": {
     "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
   }
 }
