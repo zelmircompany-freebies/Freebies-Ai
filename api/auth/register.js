@@ -1,69 +1,48 @@
 const { getSupabaseAdmin } = require('../_supabase');
 
+// Sends a magic sign-in link to the given email. Nothing about the account
+// (including a password) exists yet in a usable form — the user only
+// becomes a real, logged-in account once they click the link in their
+// inbox (handled client-side) and then set a password via set-password.js.
+// This is what proves they actually own the address.
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { email, password } = req.body || {};
+  const { email } = req.body || {};
   if (!email || typeof email !== 'string' || !email.includes('@')) {
     return res.status(400).json({ error: 'Введите корректный email' });
-  }
-  if (!password || typeof password !== 'string' || password.length < 8) {
-    return res.status(400).json({ error: 'Пароль должен быть не короче 8 символов' });
   }
 
   try {
     const supabase = getSupabaseAdmin();
 
-    // Create the user directly (no email confirmation step, so login works
-    // immediately after registration).
-    const { data: created, error: createError } = await supabase.auth.admin.createUser({
+    // Don't let someone "re-register" over an account that already has a
+    // password set (i.e. has already completed onboarding).
+    const { data: existingUsers } = await supabase.auth.admin.listUsers();
+    const existing = existingUsers?.users?.find(
+      (u) => u.email?.toLowerCase() === email.toLowerCase()
+    );
+    if (existing && existing.user_metadata?.password_set) {
+      return res.status(409).json({ error: 'Этот email уже зарегистрирован. Попробуйте войти.' });
+    }
+
+    const siteUrl = process.env.SITE_URL || 'https://freebies-ai.vercel.app';
+    const { error: otpError } = await supabase.auth.signInWithOtp({
       email,
-      password,
-      email_confirm: true,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: `${siteUrl}/`,
+      },
     });
 
-    if (createError) {
-      const msg = /already registered|already exists/i.test(createError.message)
-        ? 'Этот email уже зарегистрирован'
-        : createError.message;
-      return res.status(409).json({ error: msg });
+    if (otpError) {
+      console.error('Magic link send error:', otpError);
+      return res.status(500).json({ error: 'Не удалось отправить письмо. Попробуйте позже.' });
     }
 
-    const user = created.user;
-
-    // Create the profile row with the starting bonus.
-    const NEW_ACCOUNT_BONUS_STARS = 110;
-    const { error: profileError } = await supabase.from('profiles').insert({
-      id: user.id,
-      email: user.email,
-      name: email.split('@')[0],
-      stars: NEW_ACCOUNT_BONUS_STARS,
-      daily_stars: 0,
-      daily_stars_date: null,
-      ug_free_uses_left: null,
-    });
-    if (profileError) {
-      console.error('Profile insert failed:', profileError);
-      // Not fatal for the sign-up itself — get-profile will lazily create
-      // it later if this row is missing.
-    }
-
-    // Sign the user in immediately so the frontend gets a session/token.
-    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (signInError) {
-      return res.status(500).json({ error: 'Регистрация прошла, но не удалось войти. Попробуйте войти вручную.' });
-    }
-
-    return res.status(201).json({
-      user: { id: user.id, email: user.email },
-      session: signInData.session,
-      profile: { name: email.split('@')[0], stars: NEW_ACCOUNT_BONUS_STARS },
-    });
+    return res.status(200).json({ success: true, email });
   } catch (err) {
-    console.error('Register error:', err);
+    console.error('Register (send-link) error:', err);
     return res.status(500).json({ error: 'Ошибка сервера. Попробуйте позже.' });
   }
 };
