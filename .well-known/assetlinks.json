@@ -2,7 +2,7 @@
       "relation": ["delegate_permission/common.handle_all_urls"],
       "target": {
         "namespace": "android_app",
-        "package_name": "site.freebiesai.twa",
+        "package_name": "app.vercel.freebies_ai.twa",
         "sha256_cert_fingerprints": ["5E:56:3B:5D:4B:B7:F4:56:94:28:27:36:EE:04:1D:05:AA:C7:64:3C:43:9F:10:C8:46:18:85:76:53:CE:47:D3"]
       }
     }]
