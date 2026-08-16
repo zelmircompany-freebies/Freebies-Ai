@@ -1,8 +1,0 @@
-[{
-      "relation": ["delegate_permission/common.handle_all_urls"],
-      "target": {
-        "namespace": "android_app",
-        "package_name": "app.vercel.freebies_ai.twa",
-        "sha256_cert_fingerprints": ["C3:17:05:0E:C3:CD:05:4E:06:4B:E5:7B:6A:17:3D:60:07:FD:CA:4E:40:38:35:4E:4C:3E:02:A4:5E:35:02:33"]
-      }
-    }]
