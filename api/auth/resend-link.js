@@ -1,7 +1,7 @@
 const { getSupabaseAdmin } = require('../_supabase');
 
-// Resends a fresh magic sign-in link (used by the "Resend link" button on
-// the "check your email" screen).
+// Resends a fresh sign-in code (used by the "Resend code" button on
+// the code-entry screen).
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -12,16 +12,16 @@ module.exports = async function handler(req, res) {
 
   try {
     const supabase = getSupabaseAdmin();
-    const siteUrl = process.env.SITE_URL || 'https://freebies-ai.vercel.app';
+    // No emailRedirectTo here either, for the same reason as register.js —
+    // we want the numeric code, not a clickable link.
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
         shouldCreateUser: true,
-        emailRedirectTo: `${siteUrl}/`,
       },
     });
     if (error) {
-      console.error('Resend link error:', error);
+      console.error('Resend code error:', error);
       return res.status(500).json({ error: 'Не удалось отправить письмо. Попробуйте позже.' });
     }
     return res.status(200).json({ success: true });
