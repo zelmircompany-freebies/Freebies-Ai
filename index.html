@@ -1416,8 +1416,13 @@
                 });
             }
 
-            window.addEventListener('load', boot);
-        })();
+            // Start auth UI without waiting for every external page resource.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
+} else {
+    boot();
+}
+            })();
     </script>
 
     <!-- ============ HOME TAB SHOWCASE (decorative sample content) ============ -->
