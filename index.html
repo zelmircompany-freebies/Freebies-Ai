@@ -1416,12 +1416,7 @@
                 });
             }
 
-            // Start auth UI without waiting for every external page resource.
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot, { once: true });
-} else {
-    boot();
-}
+            window.addEventListener('load', boot);
             })();
     </script>
 
