@@ -1,14 +1,15 @@
 // Vercel Serverless Function — единая точка входа для всех бэкенд-прокси проекта.
-// Объединяет: agnes-image, agnes-video, agnes-video-status, pixazo-image, pixazo-video,
-// pixazo-video-status, gemini, openrouter, openrouter-ping, pollinations-image.
+// Объединяет: agnes-image, agnes-video, agnes-video-status, upload-media, gemini,
+// openrouter, openrouter-ping, pollinations-image.
 //
 // Роутинг по параметру action:
-//   ?action=agnes-image        (POST)  — генерация изображения через Agnes AI (Agnes Image 2.1 Flash)
-//   ?action=agnes-video        (POST)  — запуск генерации видео через Agnes AI (Agnes Video 2.5)
+//   ?action=agnes-image        (POST)  — генерация изображения (agnes-image-2.5/2.1/2.0-flash)
+//   ?action=agnes-video        (POST)  — запуск генерации видео (agnes-video-2.5-flash)
 //   ?action=agnes-video-status (GET)   — статус генерации видео (+ ?video_id=...)
-//   ?action=pixazo-image       (POST)  — генерация изображения через Pixazo SDXL Base 1.0
-//   ?action=pixazo-video       (POST)  — запуск генерации видео через Pixazo LTX-2.5 Fast
-//   ?action=pixazo-video-status (GET)  — статус генерации видео LTX (+ ?request_id=...)
+//   ?action=upload-media       (POST)  — загружает base64-картинку/аудио в Supabase Storage
+//                                        и возвращает публичный URL (нужен для i2i, keyframes,
+//                                        reference images и custom audio на Agnes — все эти
+//                                        режимы принимают только публичные URL, не base64)
 //   ?action=gemini             (POST)  — прокси к Google Gemini
 //   ?action=openrouter         (POST)  — прокси к OpenRouter, единый route для ВСЕХ текстовых
 //                                        моделей чата. Ключи: OPENROUTER_KEY, OPENROUTER_BACKUP_KEYS
@@ -39,7 +40,10 @@ async function callWithRetry(endpoint, payload, keyPool, maxAttempts = 6) {
         body: JSON.stringify(payload),
       });
 
-      if (upstream.status === 429 || upstream.status === 420 || upstream.status === 500) {
+      // Retry on rate limits, server errors, and "no available channel" (503) — the
+      // latter is a distributor/routing error on Agnes's side, often transient and
+      // sometimes resolved by simply trying again or hitting a different key/channel.
+      if ([429, 420, 500, 502, 503, 504].includes(upstream.status)) {
         lastError = new Error(`API error (${upstream.status})`);
         continue;
       }
@@ -65,60 +69,40 @@ function getAgnesKeyPool() {
   return AGNES_KEY ? [AGNES_KEY, ...AGNES_BACKUP_KEYS] : [];
 }
 
-function getPixazoKeyPool() {
-  const PIXAZO_KEY = process.env.PIXAZO_KEY;
-  const PIXAZO_BACKUP_KEYS = (process.env.PIXAZO_BACKUP_KEYS || '')
-    .split(',')
-    .map(k => k.trim())
-    .filter(Boolean);
-  return PIXAZO_KEY ? [PIXAZO_KEY, ...PIXAZO_BACKUP_KEYS] : [];
-}
-
-// Pixazo uses a different auth scheme (Ocp-Apim-Subscription-Key, not Bearer) and
-// different error/response shapes than Agnes, so it gets its own small retry helper
-// instead of reusing callWithRetry.
-async function callPixazoWithRetry(url, options, keyPool, maxAttempts = 4) {
-  let lastError = null;
-  for (let attempt = 0; attempt < maxAttempts && attempt < keyPool.length; attempt++) {
-    const key = keyPool[attempt];
-    try {
-      const upstream = await fetch(url, {
-        ...options,
-        headers: { ...options.headers, 'Ocp-Apim-Subscription-Key': key },
-      });
-      if (upstream.status === 401 || upstream.status === 429 || upstream.status === 402) {
-        lastError = new Error(`Pixazo error (${upstream.status})`);
-        continue;
-      }
-      return upstream;
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError || new Error('All Pixazo API keys exhausted.');
-}
 
 /* ============ agnes-image ============ */
+// Three selectable image models, replacing both the old single Agnes Image
+// 2.1 Flash and Pixazo's Stable Diffusion XL. All three share the same
+// endpoint/key pool and the same request shape (model + prompt + size + ratio
+// + optional image[] for i2i) — see https://www.agnes-ai.com/en/docs/agnes-30-flash
+// and the agnes-image-2.5-flash example the user provided.
+const AGNES_IMAGE_MODELS = new Set(['agnes-image-2.5-flash', 'agnes-image-2.1-flash', 'agnes-image-2.0-flash']);
+
 async function handleAgnesImage(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const AGNES_IMAGE_URL = 'https://apihub.agnes-ai.com/v1/images/generations';
-  const AGNES_IMAGE_MODEL = 'agnes-image-2.1-flash';
   const keyPool = getAgnesKeyPool();
 
   if (!keyPool.length) return res.status(500).json({ error: 'AGNES_KEY is not configured on the server' });
 
   try {
-    const { prompt, startImageBase64, size } = req.body || {};
+    const { prompt, model, imageUrls, size, ratio } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Missing "prompt" in request body' });
 
+    const resolvedModel = AGNES_IMAGE_MODELS.has(model) ? model : 'agnes-image-2.5-flash';
+
     const payload = {
-      model: AGNES_IMAGE_MODEL,
+      model: resolvedModel,
       prompt,
-      size: size || '1024x1024',
+      size: size || '2K',
+      ratio: ratio || '1:1',
+      extra_body: { response_format: 'url' },
     };
-    if (startImageBase64) {
-      payload.extra_body = { image: [startImageBase64], response_format: 'url' };
+    // i2i: Agnes expects an array of PUBLIC image URLs, not base64 — the client
+    // uploads to our own image-hosting endpoint first and sends the resulting URLs.
+    if (Array.isArray(imageUrls) && imageUrls.length) {
+      payload.image = imageUrls;
     }
 
     const data = await callWithRetry(AGNES_IMAGE_URL, payload, keyPool);
@@ -127,55 +111,74 @@ async function handleAgnesImage(req, res) {
     if (item && item.url) return res.status(200).json({ url: item.url });
     if (item && item.b64_json) return res.status(200).json({ url: `data:image/png;base64,${item.b64_json}` });
 
-    return res.status(502).json({ error: 'Agnes did not return a result' });
+    return res.status(502).json({ error: 'The image model is temporarily unavailable.' });
   } catch (err) {
     // Клиент при ошибке сам переключится на бесплатный Pollinations (см. script.js).
-    return res.status(502).json({ error: err.message || 'Agnes request failed' });
+    // Никогда не прокидываем сырой текст апстрима (может быть JSON/HTML) наружу.
+    return res.status(502).json({ error: 'The image model is temporarily unavailable.' });
   }
 }
 
-/* ============ agnes-video ============ */
+/* ============ agnes-video (agnes-video-2.5-flash, replaces v2.0 and Pixazo LTX) ============
+   Docs: https://www.agnes-ai.com/en/docs/agnes-video-25-flash
+   POST /v1/videos — seconds: "4".."12", mode: "text" | "image", size: "720P" only,
+   aspect_ratio: one of 21:9, 16:9, 4:3, 1:1, 3:4, 9:16. Optional: first/last keyframes,
+   up to 5 reference images, up to 3 custom audio tracks — all as PUBLIC URLs (the
+   client uploads to our own image-hosting first; see uploadBase64ToHosting on the client). */
+const AGNES_VIDEO_MODEL = 'agnes-video-2.5-flash';
+const AGNES_VIDEO_RATIOS = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
+
 async function handleAgnesVideo(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const AGNES_VIDEO_URL = 'https://apihub.agnes-ai.com/v1/videos';
-  const AGNES_VIDEO_MODEL = 'agnes-video-v2.0';
   const keyPool = getAgnesKeyPool();
 
   if (!keyPool.length) return res.status(500).json({ error: 'AGNES_KEY is not configured on the server' });
 
   try {
-    const { prompt, startImageBase64, duration, dims } = req.body || {};
+    const {
+      prompt, seconds, aspectRatio,
+      firstFrameUrl, lastFrameUrl, referenceUrls, audioUrls,
+    } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Missing "prompt" in request body' });
 
-    const frameRate = 24;
-    const dur = duration || 5;
-    const numFrames = Math.round(dur * frameRate) + 1;
-    const [width, height] = (dims || '1152x768').split('x').map(Number);
+    const dur = Math.min(12, Math.max(4, Math.round(Number(seconds) || 5)));
+    const ratio = AGNES_VIDEO_RATIOS.has(aspectRatio) ? aspectRatio : '16:9';
+    const hasKeyframe = !!(firstFrameUrl || lastFrameUrl);
 
     const payload = {
       model: AGNES_VIDEO_MODEL,
       prompt,
-      height,
-      width,
-      num_frames: numFrames,
-      frame_rate: frameRate,
+      seconds: String(dur),
+      mode: hasKeyframe ? 'image' : 'text',
+      size: '720P',
+      aspect_ratio: ratio,
     };
-    if (startImageBase64) {
-      payload.image = startImageBase64;
+    if (firstFrameUrl) payload.first_frame_url = firstFrameUrl;
+    if (lastFrameUrl) payload.last_frame_url = lastFrameUrl;
+    if (Array.isArray(referenceUrls) && referenceUrls.length) {
+      payload.reference_images = referenceUrls.slice(0, 5);
+    }
+    if (Array.isArray(audioUrls) && audioUrls.length) {
+      payload.audio_urls = audioUrls.slice(0, 3);
     }
 
     const data = await callWithRetry(AGNES_VIDEO_URL, payload, keyPool, 6);
 
-    const directUrl = data.url || data.video_url || data.result?.url;
-    if (directUrl) return res.status(200).json({ url: directUrl });
+    // The 2.5-flash API can respond already-completed (status: "completed" + url)
+    // or still-running (an id to poll) depending on how fast it finishes.
+    if (data.status === 'completed' && data.url) return res.status(200).json({ url: data.url });
 
-    const videoId = data.video_id || data.id;
-    if (!videoId) return res.status(502).json({ error: 'Agnes AI did not return URL or video_id.' });
+    const videoId = data.id || data.video_id;
+    if (!videoId) return res.status(502).json({ error: 'Agnes AI did not return a URL or task id.' });
 
     return res.status(200).json({ video_id: videoId });
   } catch (err) {
-    return res.status(502).json({ error: err.message || 'Agnes video request failed' });
+    // Never pass the raw upstream error text (can be JSON/HTML) to the client —
+    // just a short, friendly message. The model itself was tried with every key
+    // in the pool first (see callWithRetry above).
+    return res.status(502).json({ error: 'The video model is temporarily unavailable. Please try again in a moment.' });
   }
 }
 
@@ -193,12 +196,15 @@ async function handleAgnesVideoStatus(req, res) {
 
   for (const key of keyPool) {
     try {
-      const upstream = await fetch(`${AGNES_VIDEO_POLL_URL}?video_id=${encodeURIComponent(video_id)}`, {
+      // model_name is required by the 2.5-flash status endpoint.
+      const upstream = await fetch(`${AGNES_VIDEO_POLL_URL}?video_id=${encodeURIComponent(video_id)}&model_name=${AGNES_VIDEO_MODEL}`, {
         headers: { Authorization: `Bearer ${key}` },
       });
       if (upstream.status === 429 || upstream.status === 420) continue;
       if (upstream.ok) {
         const data = await upstream.json();
+        // Normalize the 2.5-flash "status" field (queued/pending/completed/failed) and
+        // "url" into the shape the client already expects (status + url / video_url).
         return res.status(200).json(data);
       }
     } catch (_) {
@@ -239,7 +245,6 @@ async function handleGemini(req, res) {
   }
 }
 
-/* ============ openrouter (Laguna / Coder — основной ключ) ============ */
 /* ============ openrouter (единый route для всех текстовых моделей чата) ============
    Silent key rotation: if OpenRouter returns any error (rate limit, auth, 5xx, etc.)
    the server just tries the next key in the pool — the client never sees which key
@@ -346,145 +351,65 @@ async function handleOpenrouterPing(req, res) {
   return res.status(200).json({ ok: false, ms });
 }
 
-/* ============ pixazo-image (Stable Diffusion XL Base 1.0, синхронный) ============ */
-async function handlePixazoImage(req, res) {
+/* ============ upload-media (Supabase Storage) ============
+   Agnes's i2i, keyframe (first/last frame), reference-image, and custom-audio
+   features all require PUBLIC URLs — base64 is not accepted for those modes.
+   This route re-uses the same Supabase project already configured for auth
+   (SUPABASE_URL + SUPABASE_SECRET_KEY) and uploads into a dedicated public
+   bucket, then hands back the public URL for the client to pass along to
+   agnes-image / agnes-video.
+   Requires a public Storage bucket named "media" to exist in the Supabase
+   project (Storage → New bucket → name "media" → Public bucket: on). */
+async function handleUploadMedia(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const PIXAZO_GATEWAY = 'https://gateway.pixazo.ai';
-  const PIXAZO_SDXL_PATH = '/getImage/v1/getSDXLImage';
-  const keyPool = getPixazoKeyPool();
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+  const BUCKET = 'media';
 
-  if (!keyPool.length) return res.status(500).json({ error: 'PIXAZO_KEY is not configured on the server' });
-
-  try {
-    const { prompt, width, height, negativePrompt, seed } = req.body || {};
-    if (!prompt) return res.status(400).json({ error: 'Missing "prompt" in request body' });
-
-    const payload = {
-      prompt,
-      width: width || 1024,
-      height: height || 1024,
-      num_steps: 20,
-      guidance_scale: 7.5,
-    };
-    if (negativePrompt) payload.negative_prompt = negativePrompt;
-    if (seed) payload.seed = seed;
-
-    const upstream = await callPixazoWithRetry(PIXAZO_GATEWAY + PIXAZO_SDXL_PATH, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
-      body: JSON.stringify(payload),
-    }, keyPool);
-
-    const data = await upstream.json().catch(() => ({}));
-    if (!upstream.ok) {
-      const msg = (data && (data.message || data.error)) || `Pixazo error (${upstream.status})`;
-      return res.status(upstream.status).json({ error: msg });
-    }
-
-    // SDXL responds synchronously with { imageUrl: "..." }
-    if (data && data.imageUrl) return res.status(200).json({ url: data.imageUrl });
-    if (typeof data.output === 'string' && data.output) return res.status(200).json({ url: data.output });
-
-    return res.status(502).json({ error: 'Pixazo SDXL did not return a result' });
-  } catch (err) {
-    return res.status(502).json({ error: err.message || 'Pixazo image request failed' });
+  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+    return res.status(500).json({ error: 'Supabase is not configured on the server' });
   }
-}
-
-/* ============ pixazo-video (LTX-2.5 Fast, асинхронный — submit) ============ */
-async function handlePixazoVideo(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
-  const PIXAZO_GATEWAY = 'https://gateway.pixazo.ai';
-  const keyPool = getPixazoKeyPool();
-
-  if (!keyPool.length) return res.status(500).json({ error: 'PIXAZO_KEY is not configured on the server' });
 
   try {
-    // startImage can be either a base64 data URI (typical — the client encodes the
-    // uploaded file directly, no public URL needed for i2v) or a public URL.
-    const { prompt, startImage, duration, aspectRatio } = req.body || {};
-    if (!prompt) return res.status(400).json({ error: 'Missing "prompt" in request body' });
+    const { base64, mimeType, kind } = req.body || {};
+    if (!base64) return res.status(400).json({ error: 'Missing "base64" in request body' });
 
-    const isI2V = !!startImage;
-    const path = isI2V ? '/ltx-video/v1/image-to-video' : '/ltx-video/v1/text-to-video';
+    // Accept both raw base64 and full data: URIs.
+    const commaIdx = base64.indexOf(',');
+    const rawBase64 = base64.startsWith('data:') && commaIdx !== -1 ? base64.slice(commaIdx + 1) : base64;
+    const contentType = mimeType || (kind === 'audio' ? 'audio/mpeg' : 'image/png');
+    const ext = contentType.split('/')[1] || (kind === 'audio' ? 'mp3' : 'png');
 
-    const payload = {
-      prompt,
-      duration: duration || 5,
-      aspect_ratio: aspectRatio || '16:9',
-    };
-    if (isI2V) payload.image = startImage;
+    const buffer = Buffer.from(rawBase64, 'base64');
+    // Basic size guard — Agnes inputs don't need to be huge, and this keeps the
+    // function fast and the bucket tidy.
+    if (buffer.length > 15 * 1024 * 1024) {
+      return res.status(400).json({ error: 'File is too large (max 15MB).' });
+    }
 
-    const upstream = await callPixazoWithRetry(PIXAZO_GATEWAY + path, {
+    const filename = `${kind === 'audio' ? 'audio' : 'img'}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${ext}`;
+    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${filename}`;
+
+    const upstream = await fetch(uploadUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
-      body: JSON.stringify(payload),
-    }, keyPool);
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_SECRET_KEY}`,
+        'apikey': SUPABASE_SECRET_KEY,
+        'Content-Type': contentType,
+        'x-upsert': 'true',
+      },
+      body: buffer,
+    });
 
-    const data = await upstream.json().catch(() => ({}));
     if (!upstream.ok) {
-      const msg = (data && (data.message || data.error)) || `Pixazo error (${upstream.status})`;
-      return res.status(upstream.status).json({ error: msg });
+      return res.status(502).json({ error: 'Upload failed. Please try again.' });
     }
 
-    // LTX is async: the submit call returns a request_id to poll.
-    if (data && data.request_id) {
-      return res.status(200).json({ request_id: data.request_id, status: data.status || 'QUEUED' });
-    }
-
-    // In case the gateway ever responds synchronously for this route too.
-    if (data && data.output && data.output.media_url) {
-      const mu = data.output.media_url;
-      const url = Array.isArray(mu) ? mu[0] : mu;
-      if (url) return res.status(200).json({ url });
-    }
-
-    return res.status(502).json({ error: 'Pixazo LTX did not return a request_id or result' });
+    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${filename}`;
+    return res.status(200).json({ url: publicUrl });
   } catch (err) {
-    return res.status(502).json({ error: err.message || 'Pixazo video request failed' });
-  }
-}
-
-/* ============ pixazo-video-status (поллинг статуса LTX) ============ */
-async function handlePixazoVideoStatus(req, res) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-
-  const PIXAZO_GATEWAY = 'https://gateway.pixazo.ai';
-  const keyPool = getPixazoKeyPool();
-
-  if (!keyPool.length) return res.status(500).json({ error: 'PIXAZO_KEY is not configured on the server' });
-
-  const { request_id } = req.query;
-  if (!request_id) return res.status(400).json({ error: 'Missing "request_id" query parameter' });
-
-  try {
-    const upstream = await callPixazoWithRetry(
-      `${PIXAZO_GATEWAY}/v2/requests/status/${encodeURIComponent(request_id)}`,
-      { method: 'GET' },
-      keyPool
-    );
-
-    const data = await upstream.json().catch(() => ({}));
-    if (!upstream.ok) {
-      const msg = (data && (data.message || data.error)) || `Pixazo error (${upstream.status})`;
-      return res.status(upstream.status).json({ error: msg });
-    }
-
-    const status = data.status;
-    if (status === 'COMPLETED') {
-      const mu = data.output && data.output.media_url;
-      const url = Array.isArray(mu) ? mu[0] : mu;
-      if (!url) return res.status(502).json({ error: 'Generation completed but no result URL was found' });
-      return res.status(200).json({ status: 'COMPLETED', url });
-    }
-    if (status === 'FAILED' || status === 'ERROR') {
-      return res.status(200).json({ status: 'FAILED', error: data.error || 'Generation failed' });
-    }
-    return res.status(200).json({ status: status || 'PROCESSING' });
-  } catch (err) {
-    return res.status(502).json({ error: err.message || 'Pixazo status check failed' });
+    return res.status(502).json({ error: 'Upload failed. Please try again.' });
   }
 }
 
@@ -534,9 +459,7 @@ const ROUTES = {
   'agnes-image': handleAgnesImage,
   'agnes-video': handleAgnesVideo,
   'agnes-video-status': handleAgnesVideoStatus,
-  'pixazo-image': handlePixazoImage,
-  'pixazo-video': handlePixazoVideo,
-  'pixazo-video-status': handlePixazoVideoStatus,
+  'upload-media': handleUploadMedia,
   'gemini': handleGemini,
   'openrouter': handleOpenrouter,
   'openrouter-ping': handleOpenrouterPing,
