@@ -1661,21 +1661,15 @@
                         animBtn.addEventListener("click", () => {
                             setTab("gen-video");
                             setTimeout(() => {
-                                const vidModeBtns = $$("#vidModeGroup .mode-btn");
-                                vidModeBtns.forEach(btn => {
-                                    if (btn.dataset.mode === "image") {
-                                        btn.click();
-                                    }
-                                });
-                                const vidSourceInput = $("#vidSourceInput");
+                                const vidFirstFrameInput = $("#vidFirstFrameInput");
                                 fetch(m.media.url)
                                     .then(res => res.blob())
                                     .then(blob => {
                                         const file = new File([blob], "animate_me.png", { type: "image/png" });
                                         const dt = new DataTransfer();
                                         dt.items.add(file);
-                                        vidSourceInput.files = dt.files;
-                                        vidSourceInput.dispatchEvent(new Event('change'));
+                                        vidFirstFrameInput.files = dt.files;
+                                        vidFirstFrameInput.dispatchEvent(new Event('change'));
                                         const vidPromptInput = $("#vidPromptInput");
                                         vidPromptInput.value = "Animate this";
                                         const container = $("#view-gen-video .flex-1");
@@ -1870,11 +1864,40 @@
                 }
             }
 
+            // Moves the real #chatComposer DOM node between the centered slot (inside
+            // #emptyState, Dola/Kling-style) and its normal spot at the bottom of the
+            // screen, depending on whether the active chat has any messages yet.
+            function updateComposerPosition() {
+                const composer = document.getElementById('chatComposer');
+                const centerSlot = document.getElementById('chatComposerCenterSlot');
+                const bottomSlot = document.getElementById('chatComposerBottomSlot');
+                if (!composer || !centerSlot || !bottomSlot) return;
+                const chat = getActiveChat();
+                const isEmpty = !chat || chat.messages.length === 0;
+                if (isEmpty) {
+                    centerSlot.appendChild(composer);
+                    bottomSlot.classList.add('composer-slot-empty');
+                } else {
+                    bottomSlot.appendChild(composer);
+                    bottomSlot.classList.remove('composer-slot-empty');
+                }
+            }
+            window.updateComposerPosition = updateComposerPosition;
+
             function renderMessages() {
+                // Pull the composer out before wiping #chatScroll's contents — it may
+                // currently live inside #emptyState (a child of #chatScroll), and we don't
+                // want innerHTML="" to destroy that live DOM node.
+                const composerEl = document.getElementById('chatComposer');
+                const bottomSlotEl = document.getElementById('chatComposerBottomSlot');
+                if (composerEl && bottomSlotEl && !bottomSlotEl.contains(composerEl)) {
+                    bottomSlotEl.appendChild(composerEl);
+                }
                 chatScroll.innerHTML = "";
                 const chat = getActiveChat();
                 if (chat.messages.length === 0) {
                     chatScroll.appendChild(emptyState);
+                    updateComposerPosition();
                     return;
                 }
                 chat.messages.forEach(m => {
@@ -1890,6 +1913,7 @@
                         }
                     }
                 });
+                updateComposerPosition();
                 scrollToBottom();
             }
 
@@ -2319,14 +2343,16 @@
                 });
 
                 if (!res.ok) {
-                    const err = await res.text();
-                    throw new Error(`Gemini error (${res.status}): ${err.slice(0, 200)}`);
+                    // Never surface the raw upstream body — it can be HTML (e.g. a 405
+                    // error page from an edge/proxy) rather than JSON, and showing that
+                    // to the person in chat looks broken and leaks server internals.
+                    throw new Error("Gemini is temporarily unavailable.");
                 }
-                const data = await res.json();
-                if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content
+                const data = await res.json().catch(() => null);
+                if (!data || !data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content
                     .parts || !data
                     .candidates[0].content.parts[0]) {
-                    throw new Error("Empty response from Gemini");
+                    throw new Error("Gemini is temporarily unavailable.");
                 }
                 return cleanText(data.candidates[0].content.parts[0].text);
             }
@@ -2377,10 +2403,12 @@
                             return await callGemini(prompt, imageBase64, mimeType, true);
                         } catch (err2) {
                             console.warn('Gemini fallback also failed:', err2);
-                            throw err2;
+                            // Both the chosen model and the Gemini fallback failed — show one
+                            // clean, friendly message instead of a raw/technical error string.
+                            throw new Error("The AI is temporarily unavailable. Please try again in a moment, or switch models in Settings.");
                         }
                     }
-                    throw err;
+                    throw new Error("The AI is temporarily unavailable. Please try again in a moment, or switch models in Settings.");
                 }
             }
 
@@ -2422,7 +2450,30 @@
                 return URL.createObjectURL(imageBlob);
             }
 
-            async function callAgnesImage(prompt, startImageBase64, options) {
+            // Uploads a base64 data URI to our own Supabase-backed hosting and returns a
+            // public URL. Needed for Agnes i2i, video keyframes, reference images, and
+            // custom audio — all of those require a public URL, not base64.
+            async function uploadToHosting(base64DataUri, kind) {
+                const commaIdx = base64DataUri.indexOf(',');
+                const mimeMatch = base64DataUri.match(/^data:([^;]+);/);
+                const mimeType = mimeMatch ? mimeMatch[1] : (kind === 'audio' ? 'audio/mpeg' : 'image/png');
+                const res = await fetch('/api/api?action=upload-media', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        base64: commaIdx !== -1 ? base64DataUri.slice(commaIdx + 1) : base64DataUri,
+                        mimeType,
+                        kind: kind || 'image',
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed');
+                return data.url;
+            }
+
+            // Three selectable image models: agnes-image-2.5-flash / 2.1-flash / 2.0-flash.
+            // options: { model, size ('1K'|'2K'|'3K'|'4K'), ratio, imageUrls (public URLs, i2i) }
+            async function callAgnesImage(prompt, imageUrls, options) {
                 options = options || {};
                 try {
                     const res = await fetch('/api/api?action=agnes-image', {
@@ -2430,8 +2481,10 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             prompt,
-                            startImageBase64: startImageBase64 || null,
-                            size: options.size || '1024x1024',
+                            model: options.model || 'agnes-image-2.5-flash',
+                            size: options.size || '2K',
+                            ratio: options.ratio || '1:1',
+                            imageUrls: imageUrls || null,
                         }),
                     });
                     const data = await res.json();
@@ -2443,34 +2496,22 @@
                 }
             }
 
-            // Stable Diffusion XL Base 1.0 via Pixazo — synchronous, text-to-image only.
-            async function callPixazoImage(prompt, options) {
-                options = options || {};
-                const [w, h] = (options.size || '1024x1024').split('x').map(Number);
-                const res = await fetch('/api/api?action=pixazo-image', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        prompt,
-                        width: w || 1024,
-                        height: h || 1024,
-                    }),
-                });
-                const data = await res.json();
-                if (!res.ok || !data.url) throw new Error(data.error || 'Pixazo SDXL did not return a result');
-                return data.url;
-            }
-
-            async function callAgnesVideo(prompt, startImageBase64, onStatus, options) {
+            // Agnes Video 2.5 Flash. options: { seconds: 4-12, aspectRatio, firstFrameUrl,
+            // lastFrameUrl, referenceUrls (up to 5), audioUrls (up to 3) }. All image/audio
+            // inputs must be public URLs — see uploadToHosting() for how those are produced.
+            async function callAgnesVideo(prompt, _unusedBase64, onStatus, options) {
                 options = options || {};
                 const res = await fetch('/api/api?action=agnes-video', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         prompt,
-                        startImageBase64: startImageBase64 || null,
-                        duration: options.duration || 5,
-                        dims: options.dims || "1152x768",
+                        seconds: options.seconds || 5,
+                        aspectRatio: options.aspectRatio || "16:9",
+                        firstFrameUrl: options.firstFrameUrl || null,
+                        lastFrameUrl: options.lastFrameUrl || null,
+                        referenceUrls: options.referenceUrls || null,
+                        audioUrls: options.audioUrls || null,
                     }),
                 });
                 const data = await res.json();
@@ -2494,45 +2535,6 @@
                         }
                         if (status === "failed" || status === "error") {
                             throw new Error("Video generation failed.");
-                        }
-                        onStatus && onStatus(`Generating video… (${Math.round((i + 1) * POLL_INTERVAL / 1000)}s)`);
-                    } catch (err) {}
-                }
-                throw new Error("Video generation timed out.");
-            }
-
-            // LTX-2.5 Fast via Pixazo — async (submit + poll request_id), 5-second clips only.
-            async function callPixazoVideo(prompt, startImageBase64, onStatus, options) {
-                options = options || {};
-                const res = await fetch('/api/api?action=pixazo-video', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        prompt,
-                        startImage: startImageBase64 || null,
-                        duration: 5,
-                        aspectRatio: options.aspectRatio || '16:9',
-                    }),
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Pixazo LTX video request failed');
-                if (data.url) return data.url;
-
-                const requestId = data.request_id;
-                if (!requestId) throw new Error('Pixazo LTX did not return a request_id.');
-                onStatus && onStatus("Processing video on server…");
-
-                for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
-                    await new Promise(r => setTimeout(r, POLL_INTERVAL));
-                    try {
-                        const pollRes = await fetch(`/api/api?action=pixazo-video-status&request_id=${encodeURIComponent(requestId)}`);
-                        if (!pollRes.ok) continue;
-                        const pollData = await pollRes.json();
-                        if (pollData.status === 'COMPLETED' && pollData.url) {
-                            return pollData.url;
-                        }
-                        if (pollData.status === 'FAILED') {
-                            throw new Error(pollData.error || 'Video generation failed.');
                         }
                         onStatus && onStatus(`Generating video… (${Math.round((i + 1) * POLL_INTERVAL / 1000)}s)`);
                     } catch (err) {}
@@ -2756,15 +2758,6 @@
             const imgPromptInput = $("#imgPromptInput");
             const imgGenerateBtn = $("#imgGenerateBtn");
             const imgGenResult = $("#imgGenResult");
-            let selectedImgRatioBtn = $("#imgRatioGroup .ratio-btn");
-            selectedImgRatioBtn.classList.add("selected");
-            $$("#imgRatioGroup .ratio-btn").forEach(btn => {
-                btn.addEventListener("click", () => {
-                    $$("#imgRatioGroup .ratio-btn").forEach(b => b.classList.remove("selected"));
-                    btn.classList.add("selected");
-                    selectedImgRatioBtn = btn;
-                });
-            });
 
             function renderGenLoading(container, label) {
                 container.innerHTML = "";
@@ -2838,52 +2831,34 @@
                 container.appendChild(col);
             }
 
-            let imgMode = "text";
+            // Reference image for i2i — all three Agnes image models support it, so there's
+            // no mode switch anymore: the reference slot is just always-optional.
             let imgSourceBase64 = null;
-            const imgModeGroup = $("#imgModeGroup");
-            const imgUploadWrap = $("#imgUploadWrap");
             const imgSourceInput = $("#imgSourceInput");
             const imgUploadDropzone = $("#imgUploadDropzone");
             const imgSourcePreviewWrap = $("#imgSourcePreviewWrap");
             const imgSourcePreview = $("#imgSourcePreview");
             const imgSourceRemoveBtn = $("#imgSourceRemoveBtn");
-            const imgTabTitle = $("#imgTabTitle");
-            const imgTabSubtitle = $("#imgTabSubtitle");
-            const imgPromptLabel = $("#imgPromptLabel");
+            const imgRefCount = $("#imgRefCount");
 
-            let selectedImgModeBtn = $('#imgModeGroup .mode-btn[data-mode="text"]');
-            selectedImgModeBtn.classList.add("selected");
-
-            function setImgMode(mode) {
-                imgMode = mode;
-                $$("#imgModeGroup .mode-btn").forEach(b => b.classList.toggle("selected", b.dataset.mode === mode));
-                if (mode === "image") {
-                    imgUploadWrap.classList.remove("hidden");
-                    imgTabTitle.textContent = "Image-to-Image";
-                    imgTabSubtitle.textContent = "Generate image based on your photo and text description";
-                    imgPromptLabel.textContent = "What to change / result description";
-                } else {
-                    imgUploadWrap.classList.add("hidden");
-                    imgTabTitle.textContent = "Text-to-Image";
-                    imgTabSubtitle.textContent = "Generate images from text with settings";
-                    imgPromptLabel.textContent = "Image description";
-                }
+            function updateImgRefUI() {
+                if (imgRefCount) imgRefCount.textContent = imgSourceBase64 ? "1/1" : "0/1";
+                if (imgUploadDropzone) imgUploadDropzone.style.display = imgSourceBase64 ? "none" : "";
+                if (imgSourcePreviewWrap) imgSourcePreviewWrap.classList.toggle("hidden", !imgSourceBase64);
             }
-            $$("#imgModeGroup .mode-btn").forEach(btn => {
-                btn.addEventListener("click", () => setImgMode(btn.dataset.mode));
-            });
+            updateImgRefUI();
 
-            /* ============ IMAGE MODEL PICKER (Agnes Image 2.1 Flash / SDXL Base 1.0) ============ */
-            let imgModel = "agnes"; // 'agnes' | 'sdxl'
-            const imgModeModeBtnImage = $('#imgModeGroup .mode-btn[data-mode="image"]');
+            /* ============ IMAGE MODEL PICKER (3 Agnes Image models) ============ */
+            let imgModel = "agnes-image-2.5-flash";
             const imgModelDropdownBtn = $("#imgModelDropdownBtn");
             const imgModelDropdownMenu = $("#imgModelDropdownMenu");
             const imgModelDropdownLogo = $("#imgModelDropdownLogo");
             const imgModelDropdownName = $("#imgModelDropdownName");
             const imgModelDropdownTags = $("#imgModelDropdownTags");
             const IMG_MODEL_INFO = {
-                agnes: { logo: "img/agnesimg.png", fallback: "🖼️", name: "Agnes Image 2.1 Flash", tags: ["i2i", "t2i"] },
-                sdxl: { logo: "img/sd.png", fallback: "🎨", name: "Stable Diffusion XL Base 1.0", tags: ["t2i"] },
+                "agnes-image-2.5-flash": { logo: "img/agnesimg25.png", fallback: "🖼️", name: "Agnes Image 2.5 Flash", tags: ["i2i", "t2i"] },
+                "agnes-image-2.1-flash": { logo: "img/agnesimg.png", fallback: "🖼️", name: "Agnes Image 2.1 Flash", tags: ["i2i", "t2i"] },
+                "agnes-image-2.0-flash": { logo: "img/agnesimg20.png", fallback: "🖼️", name: "Agnes Image 2.0 Flash", tags: ["i2i", "t2i"] },
             };
 
             function setImgModel(model) {
@@ -2903,14 +2878,6 @@
                 if (info && imgModelDropdownTags) {
                     imgModelDropdownTags.innerHTML = info.tags.map(t => `<span class="model-tag">${t}</span>`).join("");
                 }
-
-                // SDXL Base 1.0 is text-to-image only — hide the Image-to-Image mode for it.
-                if (model === "sdxl") {
-                    if (imgModeModeBtnImage) imgModeModeBtnImage.style.display = "none";
-                    if (imgMode === "image") setImgMode("text");
-                } else {
-                    if (imgModeModeBtnImage) imgModeModeBtnImage.style.display = "";
-                }
                 if (imgModelDropdownMenu) imgModelDropdownMenu.classList.add("hidden");
             }
             if (imgModelDropdownBtn && imgModelDropdownMenu) {
@@ -2925,6 +2892,28 @@
                     if (!imgModelDropdownMenu.contains(e.target) && e.target !== imgModelDropdownBtn && !imgModelDropdownBtn.contains(e.target)) {
                         imgModelDropdownMenu.classList.add("hidden");
                     }
+                });
+            }
+
+            /* ============ IMAGE SIZE & RATIO PICKERS ============ */
+            let imgSize = "2K";
+            let imgRatio = "1:1";
+            const imgSizeGroup = $("#imgSizeGroup");
+            const imgRatioGroupV2 = $("#imgRatioGroup");
+            if (imgSizeGroup) {
+                $$("#imgSizeGroup .size-btn").forEach(btn => {
+                    btn.addEventListener("click", () => {
+                        imgSize = btn.dataset.size;
+                        $$("#imgSizeGroup .size-btn").forEach(b => b.classList.toggle("selected", b === btn));
+                    });
+                });
+            }
+            if (imgRatioGroupV2) {
+                $$("#imgRatioGroup .ratio-btn").forEach(btn => {
+                    btn.addEventListener("click", () => {
+                        imgRatio = btn.dataset.ratio;
+                        $$("#imgRatioGroup .ratio-btn").forEach(b => b.classList.toggle("selected", b === btn));
+                    });
                 });
             }
 
@@ -3024,26 +3013,20 @@
                 reader.onload = () => {
                     imgSourceBase64 = reader.result;
                     imgSourcePreview.src = imgSourceBase64;
-                    imgSourcePreviewWrap.classList.remove("hidden");
-                    imgUploadDropzone.classList.add("hidden");
+                    updateImgRefUI();
                 };
                 reader.readAsDataURL(file);
             });
             imgSourceRemoveBtn.addEventListener("click", () => {
                 imgSourceBase64 = null;
                 imgSourceInput.value = "";
-                imgSourcePreviewWrap.classList.add("hidden");
-                imgUploadDropzone.classList.remove("hidden");
+                updateImgRefUI();
             });
 
             imgGenerateBtn.addEventListener("click", async () => {
                 let prompt = imgPromptInput.value.trim();
                 if (!prompt) {
                     imgPromptInput.focus();
-                    return;
-                }
-                if (imgMode === "image" && !imgSourceBase64) {
-                    renderGenError(imgGenResult, "Please upload a source image first.");
                     return;
                 }
 
@@ -3056,17 +3039,20 @@
                     return;
                 }
 
-                const size = selectedImgRatioBtn.dataset.size;
-
                 try {
                     const imgUrl = await generateWithQueue('image', async () => {
                         if (loaderText) loaderText.textContent = 'Enhancing prompt with AI...';
                         const enhanced = await enhancePrompt(prompt, 'image');
-                        if (loaderText) loaderText.textContent = 'Generating image...';
-                        if (imgModel === 'sdxl') {
-                            return await callPixazoImage(enhanced, { size });
+
+                        let imageUrls = null;
+                        if (imgSourceBase64) {
+                            if (loaderText) loaderText.textContent = 'Uploading reference image...';
+                            const publicUrl = await uploadToHosting(imgSourceBase64, 'image');
+                            imageUrls = [publicUrl];
                         }
-                        return await callAgnesImage(enhanced, imgMode === "image" ? imgSourceBase64 : null, { size });
+
+                        if (loaderText) loaderText.textContent = 'Generating image...';
+                        return await callAgnesImage(enhanced, imageUrls, { model: imgModel, size: imgSize, ratio: imgRatio });
                     });
                     renderImageResult(imgGenResult, imgUrl);
                     state.photos.push({ id: "p_" + Date.now(), url: imgUrl, ts: nowLabel(), prompt });
@@ -3270,117 +3256,46 @@
                 });
             }
 
-            /* ============ VIDEO GENERATOR ============ */
+            /* ============ VIDEO GENERATOR (agnes-video-2.5-flash) ============ */
             const vidPromptInput = $("#vidPromptInput");
             const vidGenerateBtn = $("#vidGenerateBtn");
             const vidGenResult = $("#vidGenResult");
-            let selectedVidRatioBtn = $("#vidRatioGroup .ratio-btn");
-            selectedVidRatioBtn.classList.add("selected");
-            let selectedVidDurationBtn = $("#vidDurationGroup .duration-btn");
-            selectedVidDurationBtn.classList.add("selected");
 
+            let selectedVidRatio = "16:9";
             $$("#vidRatioGroup .ratio-btn").forEach(btn => {
                 btn.addEventListener("click", () => {
                     $$("#vidRatioGroup .ratio-btn").forEach(b => b.classList.remove("selected"));
                     btn.classList.add("selected");
-                    selectedVidRatioBtn = btn;
-                });
-            });
-            $$("#vidDurationGroup .duration-btn").forEach(btn => {
-                btn.addEventListener("click", () => {
-                    $$("#vidDurationGroup .duration-btn").forEach(b => b.classList.remove("selected"));
-                    btn.classList.add("selected");
-                    selectedVidDurationBtn = btn;
+                    selectedVidRatio = btn.dataset.ratio;
                 });
             });
 
-            let vidMode = "text";
-            let vidSourceBase64 = null;
-            const vidUploadWrap = $("#vidUploadWrap");
-            const vidSourceInput = $("#vidSourceInput");
-            const vidUploadDropzone = $("#vidUploadDropzone");
-            const vidSourcePreviewWrap = $("#vidSourcePreviewWrap");
-            const vidSourcePreview = $("#vidSourcePreview");
-            const vidSourceRemoveBtn = $("#vidSourceRemoveBtn");
-            const vidTabTitle = $("#vidTabTitle");
-            const vidTabSubtitle = $("#vidTabSubtitle");
-            const vidPromptLabel = $("#vidPromptLabel");
-
-            let selectedVidModeBtn = $('#vidModeGroup .mode-btn[data-mode="text"]');
-            selectedVidModeBtn.classList.add("selected");
-
-            function setVidMode(mode) {
-                vidMode = mode;
-                $$("#vidModeGroup .mode-btn").forEach(b => b.classList.toggle("selected", b.dataset.mode === mode));
-                if (mode === "image") {
-                    vidUploadWrap.classList.remove("hidden");
-                    vidTabTitle.textContent = "Image-to-Video";
-                    vidTabSubtitle.textContent = "Generate video based on your photo and motion description";
-                    vidPromptLabel.textContent = "What should happen in the video";
-                } else {
-                    vidUploadWrap.classList.add("hidden");
-                    vidTabTitle.textContent = "Text-to-Video";
-                    vidTabSubtitle.textContent = "Generate videos from text with settings";
-                    vidPromptLabel.textContent = "Video description";
-                }
+            // Duration: 4-12s slider (replaces the old 5s/10s buttons).
+            let vidDuration = 5;
+            const vidDurationSlider = $("#vidDurationSlider");
+            const vidDurationValue = $("#vidDurationValue");
+            if (vidDurationSlider) {
+                vidDurationSlider.addEventListener("input", () => {
+                    vidDuration = Number(vidDurationSlider.value);
+                    if (vidDurationValue) vidDurationValue.textContent = vidDuration;
+                    if (typeof updateVidPriceDisplay === "function") updateVidPriceDisplay();
+                });
             }
-            $$("#vidModeGroup .mode-btn").forEach(btn => {
-                btn.addEventListener("click", () => setVidMode(btn.dataset.mode));
-            });
 
-            /* ============ VIDEO MODEL PICKER (Agnes Video 2.5 / LTX-2.5 Fast) ============ */
-            let vidModel = "agnes"; // 'agnes' | 'ltx'
-            const vidDuration10Btn = $('#vidDurationGroup .duration-btn[data-duration="10"]');
+            /* ---- Model picker (single model for now, kept as a dropdown for future growth) ---- */
+            let vidModel = "agnes-video-2.5-flash";
             const vidModelDropdownBtn = $("#vidModelDropdownBtn");
             const vidModelDropdownMenu = $("#vidModelDropdownMenu");
-            const vidModelDropdownLogo = $("#vidModelDropdownLogo");
-            const vidModelDropdownName = $("#vidModelDropdownName");
-            const vidModelDropdownTags = $("#vidModelDropdownTags");
-            const VID_MODEL_INFO = {
-                agnes: { logo: "img/agnesvid.png", fallback: "🎬", name: "Agnes Video 2.5", tags: ["i2v", "t2v"] },
-                ltx: { logo: "img/ltx.png", fallback: "⚡", name: "LTX-2.5 Fast", tags: ["i2v", "t2v"] },
-            };
-
-            function setVidModel(model) {
-                vidModel = model;
-                $$("#vidModelDropdownMenu .model-dropdown-option").forEach(c => c.classList.toggle("selected", c.dataset.model === model));
-
-                const info = VID_MODEL_INFO[model];
-                if (info && vidModelDropdownLogo) {
-                    vidModelDropdownLogo.style.display = "";
-                    vidModelDropdownLogo.src = info.logo;
-                    vidModelDropdownLogo.onerror = () => {
-                        vidModelDropdownLogo.style.display = "none";
-                        vidModelDropdownLogo.parentElement.textContent = info.fallback;
-                    };
-                }
-                if (info && vidModelDropdownName) vidModelDropdownName.textContent = info.name;
-                if (info && vidModelDropdownTags) {
-                    vidModelDropdownTags.innerHTML = info.tags.map(t => `<span class="model-tag">${t}</span>`).join("");
-                }
-
-                // LTX-2.5 Fast only supports 5-second clips — hide the 10s option and force 5s.
-                if (model === "ltx") {
-                    if (vidDuration10Btn) vidDuration10Btn.style.display = "none";
-                    const btn5 = $('#vidDurationGroup .duration-btn[data-duration="5"]');
-                    if (btn5) {
-                        $$("#vidDurationGroup .duration-btn").forEach(b => b.classList.remove("selected"));
-                        btn5.classList.add("selected");
-                        selectedVidDurationBtn = btn5;
-                    }
-                } else {
-                    if (vidDuration10Btn) vidDuration10Btn.style.display = "";
-                }
-                if (typeof updateVidPriceDisplay === "function") updateVidPriceDisplay();
-                if (vidModelDropdownMenu) vidModelDropdownMenu.classList.add("hidden");
-            }
             if (vidModelDropdownBtn && vidModelDropdownMenu) {
                 vidModelDropdownBtn.addEventListener("click", (e) => {
                     e.stopPropagation();
                     vidModelDropdownMenu.classList.toggle("hidden");
                 });
                 $$("#vidModelDropdownMenu .model-dropdown-option").forEach(opt => {
-                    opt.addEventListener("click", () => setVidModel(opt.dataset.model));
+                    opt.addEventListener("click", () => {
+                        vidModel = opt.dataset.model;
+                        vidModelDropdownMenu.classList.add("hidden");
+                    });
                 });
                 document.addEventListener("click", (e) => {
                     if (!vidModelDropdownMenu.contains(e.target) && e.target !== vidModelDropdownBtn && !vidModelDropdownBtn.contains(e.target)) {
@@ -3389,34 +3304,127 @@
                 });
             }
 
-            vidUploadDropzone.addEventListener("click", () => vidSourceInput.click());
-            vidSourceInput.addEventListener("change", () => {
-                const file = vidSourceInput.files && vidSourceInput.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = () => {
-                    vidSourceBase64 = reader.result;
-                    vidSourcePreview.src = vidSourceBase64;
-                    vidSourcePreviewWrap.classList.remove("hidden");
-                    vidUploadDropzone.classList.add("hidden");
-                };
-                reader.readAsDataURL(file);
-            });
-            vidSourceRemoveBtn.addEventListener("click", () => {
-                vidSourceBase64 = null;
-                vidSourceInput.value = "";
-                vidSourcePreviewWrap.classList.add("hidden");
-                vidUploadDropzone.classList.remove("hidden");
-            });
+            /* ---- Keyframes: first / last frame (optional) ---- */
+            let vidFirstFrameBase64 = null;
+            let vidLastFrameBase64 = null;
+            function wireKeyframeSlot(inputId, dropzoneId, previewWrapId, previewId, removeBtnId, setter) {
+                const input = $(`#${inputId}`);
+                const dropzone = $(`#${dropzoneId}`);
+                const previewWrap = $(`#${previewWrapId}`);
+                const preview = $(`#${previewId}`);
+                const removeBtn = $(`#${removeBtnId}`);
+                if (!input || !dropzone) return;
+                dropzone.addEventListener("click", () => input.click());
+                input.addEventListener("change", () => {
+                    const file = input.files && input.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        setter(reader.result);
+                        preview.src = reader.result;
+                        previewWrap.classList.remove("hidden");
+                        dropzone.style.display = "none";
+                    };
+                    reader.readAsDataURL(file);
+                });
+                if (removeBtn) {
+                    removeBtn.addEventListener("click", () => {
+                        setter(null);
+                        input.value = "";
+                        previewWrap.classList.add("hidden");
+                        dropzone.style.display = "";
+                    });
+                }
+            }
+            wireKeyframeSlot("vidFirstFrameInput", "vidFirstFrameDropzone", "vidFirstFramePreviewWrap", "vidFirstFramePreview", "vidFirstFrameRemoveBtn", (v) => { vidFirstFrameBase64 = v; });
+            wireKeyframeSlot("vidLastFrameInput", "vidLastFrameDropzone", "vidLastFramePreviewWrap", "vidLastFramePreview", "vidLastFrameRemoveBtn", (v) => { vidLastFrameBase64 = v; });
+
+            /* ---- Reference images: up to 5 (optional) ---- */
+            let vidReferenceFiles = []; // array of base64 data URIs
+            const vidReferenceInput = $("#vidReferenceInput");
+            const vidReferenceDropzone = $("#vidReferenceDropzone");
+            const vidReferenceRow = $("#vidReferenceRow");
+            const vidRefCount = $("#vidRefCount");
+
+            function renderVidReferenceRow() {
+                if (!vidReferenceRow) return;
+                vidReferenceRow.querySelectorAll(".kling-thumb-item").forEach(el => el.remove());
+                vidReferenceFiles.forEach((b64, idx) => {
+                    const item = document.createElement("div");
+                    item.className = "kling-thumb-item";
+                    item.innerHTML = `<img src="${b64}" alt=""><button type="button" class="kling-thumb-remove">✕</button>`;
+                    item.querySelector(".kling-thumb-remove").addEventListener("click", () => {
+                        vidReferenceFiles.splice(idx, 1);
+                        renderVidReferenceRow();
+                    });
+                    vidReferenceRow.insertBefore(item, vidReferenceDropzone);
+                });
+                if (vidRefCount) vidRefCount.textContent = `${vidReferenceFiles.length}/5`;
+                if (vidReferenceDropzone) vidReferenceDropzone.style.display = vidReferenceFiles.length >= 5 ? "none" : "";
+            }
+            if (vidReferenceDropzone && vidReferenceInput) {
+                vidReferenceDropzone.addEventListener("click", () => vidReferenceInput.click());
+                vidReferenceInput.addEventListener("change", () => {
+                    const files = Array.from(vidReferenceInput.files || []).slice(0, 5 - vidReferenceFiles.length);
+                    let pending = files.length;
+                    if (!pending) return;
+                    files.forEach(file => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            vidReferenceFiles.push(reader.result);
+                            pending--;
+                            if (pending === 0) { renderVidReferenceRow(); vidReferenceInput.value = ""; }
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                });
+            }
+
+            /* ---- Custom audio: up to 3 (optional) ---- */
+            let vidAudioFiles = []; // array of { name, base64 }
+            const vidAudioInput = $("#vidAudioInput");
+            const vidAudioAddBtn = $("#vidAudioAddBtn");
+            const vidAudioList = $("#vidAudioList");
+            const vidAudioCount = $("#vidAudioCount");
+
+            function renderVidAudioList() {
+                if (!vidAudioList) return;
+                vidAudioList.innerHTML = "";
+                vidAudioFiles.forEach((item, idx) => {
+                    const row = document.createElement("div");
+                    row.className = "kling-audio-item";
+                    row.innerHTML = `<span>🎵</span><span class="kling-audio-item-name">${item.name}</span><button type="button" class="kling-audio-item-remove">✕</button>`;
+                    row.querySelector(".kling-audio-item-remove").addEventListener("click", () => {
+                        vidAudioFiles.splice(idx, 1);
+                        renderVidAudioList();
+                    });
+                    vidAudioList.appendChild(row);
+                });
+                if (vidAudioCount) vidAudioCount.textContent = `${vidAudioFiles.length}/3`;
+                if (vidAudioAddBtn) vidAudioAddBtn.style.display = vidAudioFiles.length >= 3 ? "none" : "";
+            }
+            if (vidAudioAddBtn && vidAudioInput) {
+                vidAudioAddBtn.addEventListener("click", () => vidAudioInput.click());
+                vidAudioInput.addEventListener("change", () => {
+                    const files = Array.from(vidAudioInput.files || []).slice(0, 3 - vidAudioFiles.length);
+                    let pending = files.length;
+                    if (!pending) return;
+                    files.forEach(file => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            vidAudioFiles.push({ name: file.name, base64: reader.result });
+                            pending--;
+                            if (pending === 0) { renderVidAudioList(); vidAudioInput.value = ""; }
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                });
+            }
 
             vidGenerateBtn.addEventListener("click", async () => {
                 let prompt = vidPromptInput.value.trim();
                 if (!prompt) {
                     vidPromptInput.focus();
-                    return;
-                }
-                if (vidMode === "image" && !vidSourceBase64) {
-                    renderGenError(vidGenResult, "Please upload a source image first.");
                     return;
                 }
 
@@ -3429,22 +3437,33 @@
                     return;
                 }
 
-                const dims = selectedVidRatioBtn.dataset.dims;
-                const ratio = selectedVidRatioBtn.dataset.ratio;
-                const duration = Number(selectedVidDurationBtn.dataset.duration);
-
                 try {
                     const vidUrl = await generateWithQueue('video', async () => {
                         if (loaderText) loaderText.textContent = 'Enhancing prompt with AI...';
                         const enhanced = await enhancePrompt(prompt, 'video');
-                        if (vidModel === 'ltx') {
-                            return await callPixazoVideo(enhanced, vidMode === "image" ? vidSourceBase64 : null, (label) => {
-                                loaderText.textContent = label;
-                            }, { aspectRatio: ratio });
+
+                        // All image/audio inputs need public URLs — upload whatever was attached.
+                        let firstFrameUrl = null, lastFrameUrl = null, referenceUrls = null, audioUrls = null;
+                        const hasUploads = vidFirstFrameBase64 || vidLastFrameBase64 || vidReferenceFiles.length || vidAudioFiles.length;
+                        if (hasUploads && loaderText) loaderText.textContent = 'Uploading media...';
+
+                        if (vidFirstFrameBase64) firstFrameUrl = await uploadToHosting(vidFirstFrameBase64, 'image');
+                        if (vidLastFrameBase64) lastFrameUrl = await uploadToHosting(vidLastFrameBase64, 'image');
+                        if (vidReferenceFiles.length) {
+                            referenceUrls = await Promise.all(vidReferenceFiles.map(b64 => uploadToHosting(b64, 'image')));
                         }
-                        return await callAgnesVideo(enhanced, vidMode === "image" ? vidSourceBase64 : null, (label) => {
+                        if (vidAudioFiles.length) {
+                            audioUrls = await Promise.all(vidAudioFiles.map(item => uploadToHosting(item.base64, 'audio')));
+                        }
+
+                        if (loaderText) loaderText.textContent = 'Generating video...';
+                        return await callAgnesVideo(enhanced, null, (label) => {
                             loaderText.textContent = label;
-                        }, { dims, duration });
+                        }, {
+                            seconds: vidDuration,
+                            aspectRatio: selectedVidRatio,
+                            firstFrameUrl, lastFrameUrl, referenceUrls, audioUrls,
+                        });
                     });
                     renderVideoResult(vidGenResult, vidUrl);
                     state.videos.push({ id: "v_" + Date.now(), url: vidUrl, ts: nowLabel(), prompt });

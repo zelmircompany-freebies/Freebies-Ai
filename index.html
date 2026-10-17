@@ -488,21 +488,27 @@
                             <img src="img/logo.png" alt="Freebies AI" class="w-full h-full object-cover" onerror="this.style.display='none'; this.parentElement.textContent='🎁';">
                         </div>
                         <p class="text-[15px] font-medium text-slate-500">Start a conversation</p>
-                        <p class="text-[13px] max-w-xs">Type a message, or use "draw" / "generate" to create an image or video</p>
+                        <p class="text-[13px] max-w-xs mb-2">Type a message, or use "draw" / "generate" to create an image or video</p>
+                        <!-- The composer (#chatComposer below) is moved here via JS while the
+                             conversation is empty, then moved back to its normal spot at the
+                             bottom of the screen as soon as the first message is sent. -->
+                        <div id="chatComposerCenterSlot" class="w-full max-w-xl"></div>
                     </div>
                 </div>
 
-                <div class="chat-composer-v2 border-t border-app bg-white">
-                    <div id="attachPreviewWrap" class="hidden max-w-3xl mx-auto mb-2 px-1"></div>
-                    <div class="max-w-3xl mx-auto flex items-end gap-2 bg-[#FBF8F5] border border-app rounded-3xl px-3 py-2 focus-within:border-beige-400 transition-colors">
-                        <button id="attachBtn" title="Attach file" class="composer-btn">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                        </button>
-                        <input type="file" id="fileInput" accept="image/*,video/*" class="hidden" />
-                        <textarea id="msgInput" rows="1" placeholder="Message…" class="flex-1 resize-none bg-transparent outline-none text-[15px] leading-6 py-2 max-h-40 placeholder:text-slate-400"></textarea>
-                        <button id="sendBtn" class="composer-btn send-btn disabled:opacity-40 disabled:pointer-events-none">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2" fill="white" stroke="white"/></svg>
-                        </button>
+                <div id="chatComposerBottomSlot" class="chat-composer-v2 border-t border-app bg-white">
+                    <div id="chatComposer">
+                        <div id="attachPreviewWrap" class="hidden max-w-3xl mx-auto mb-2 px-1"></div>
+                        <div class="max-w-3xl mx-auto flex items-end gap-2 bg-[#FBF8F5] border border-app rounded-3xl px-3 py-2 focus-within:border-beige-400 transition-colors">
+                            <button id="attachBtn" title="Attach file" class="composer-btn">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                            </button>
+                            <input type="file" id="fileInput" accept="image/*,video/*" class="hidden" />
+                            <textarea id="msgInput" rows="1" placeholder="Message…" class="flex-1 resize-none bg-transparent outline-none text-[15px] leading-6 py-2 max-h-40 placeholder:text-slate-400"></textarea>
+                            <button id="sendBtn" class="composer-btn send-btn disabled:opacity-40 disabled:pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2" fill="white" stroke="white"/></svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -647,81 +653,101 @@
             <section id="view-gen-image" class="hidden flex-1 flex-col min-h-0">
                 <div class="flex items-center justify-between px-4 md:px-8 py-5 border-b border-app shrink-0">
                     <div>
-                        <h1 id="imgTabTitle" class="text-[17px] font-semibold tracking-tight">Text-to-Image</h1>
-                        <p id="imgTabSubtitle" class="text-[12.5px] text-slate-400">Generate images from text with settings</p>
+                        <h1 class="text-[17px] font-semibold tracking-tight">AI Image Generation</h1>
+                        <p class="text-[12.5px] text-slate-400">Generate images from text with settings</p>
                     </div>
                 </div>
                 <div class="flex-1 overflow-y-auto px-4 md:px-8 py-6">
                     <div class="gen-two-col">
-                    <div class="max-w-2xl mx-auto flex flex-col gap-5 gen-form-col">
+                    <div class="max-w-2xl mx-auto flex flex-col gap-4 gen-form-col">
 
-                        <div class="flex flex-col gap-2">
-                            <label class="text-[13px] font-medium text-slate-600">Model</label>
-                            <div id="imgModelDropdown" class="model-dropdown">
-                                <button type="button" id="imgModelDropdownBtn" class="model-dropdown-btn">
-                                    <span class="model-dropdown-btn-left">
-                                        <span class="model-dropdown-logo"><img id="imgModelDropdownLogo" src="img/agnesimg.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🖼️';"></span>
-                                        <span class="model-dropdown-btn-text">
-                                            <span id="imgModelDropdownName" class="model-dropdown-name">Agnes Image 2.1 Flash</span>
-                                            <span id="imgModelDropdownTags" class="model-dropdown-tags"><span class="model-tag">i2i</span><span class="model-tag">t2i</span></span>
-                                        </span>
+                        <!-- Model picker -->
+                        <div id="imgModelDropdown" class="model-dropdown">
+                            <button type="button" id="imgModelDropdownBtn" class="model-dropdown-btn">
+                                <span class="model-dropdown-btn-left">
+                                    <span class="model-dropdown-logo"><img id="imgModelDropdownLogo" src="img/agnesimg25.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🖼️';"></span>
+                                    <span class="model-dropdown-btn-text">
+                                        <span id="imgModelDropdownName" class="model-dropdown-name">Agnes Image 2.5 Flash</span>
+                                        <span id="imgModelDropdownTags" class="model-dropdown-tags"><span class="model-tag">i2i</span><span class="model-tag">t2i</span></span>
                                     </span>
-                                    <span class="model-dropdown-arrow">▾</span>
+                                </span>
+                                <span class="model-dropdown-arrow">▾</span>
+                            </button>
+                            <div id="imgModelDropdownMenu" class="model-dropdown-menu hidden">
+                                <button type="button" data-model="agnes-image-2.5-flash" class="model-dropdown-option selected">
+                                    <span class="model-dropdown-logo"><img src="img/agnesimg25.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🖼️';"></span>
+                                    <span class="model-dropdown-option-text">
+                                        <span class="model-dropdown-name">Agnes Image 2.5 Flash</span>
+                                        <span class="model-dropdown-tags"><span class="model-tag">i2i</span><span class="model-tag">t2i</span></span>
+                                        <span class="model-dropdown-desc">Latest, best quality</span>
+                                    </span>
                                 </button>
-                                <div id="imgModelDropdownMenu" class="model-dropdown-menu hidden">
-                                    <button type="button" data-model="agnes" class="model-dropdown-option selected">
-                                        <span class="model-dropdown-logo"><img src="img/agnesimg.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🖼️';"></span>
-                                        <span class="model-dropdown-option-text">
-                                            <span class="model-dropdown-name">Agnes Image 2.1 Flash</span>
-                                            <span class="model-dropdown-tags"><span class="model-tag">i2i</span><span class="model-tag">t2i</span></span>
-                                            <span class="model-dropdown-desc">High quality, supports image edits</span>
-                                        </span>
-                                    </button>
-                                    <button type="button" data-model="sdxl" class="model-dropdown-option">
-                                        <span class="model-dropdown-logo"><img src="img/sd.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🎨';"></span>
-                                        <span class="model-dropdown-option-text">
-                                            <span class="model-dropdown-name">Stable Diffusion XL Base 1.0</span>
-                                            <span class="model-dropdown-tags"><span class="model-tag">t2i</span></span>
-                                            <span class="model-dropdown-desc">Fast, text-to-image only</span>
-                                        </span>
-                                    </button>
-                                </div>
+                                <button type="button" data-model="agnes-image-2.1-flash" class="model-dropdown-option">
+                                    <span class="model-dropdown-logo"><img src="img/agnesimg.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🖼️';"></span>
+                                    <span class="model-dropdown-option-text">
+                                        <span class="model-dropdown-name">Agnes Image 2.1 Flash</span>
+                                        <span class="model-dropdown-tags"><span class="model-tag">i2i</span><span class="model-tag">t2i</span></span>
+                                        <span class="model-dropdown-desc">Balanced quality & speed</span>
+                                    </span>
+                                </button>
+                                <button type="button" data-model="agnes-image-2.0-flash" class="model-dropdown-option">
+                                    <span class="model-dropdown-logo"><img src="img/agnesimg20.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🖼️';"></span>
+                                    <span class="model-dropdown-option-text">
+                                        <span class="model-dropdown-name">Agnes Image 2.0 Flash</span>
+                                        <span class="model-dropdown-tags"><span class="model-tag">i2i</span><span class="model-tag">t2i</span></span>
+                                        <span class="model-dropdown-desc">Fastest</span>
+                                    </span>
+                                </button>
                             </div>
                         </div>
 
-                        <div class="flex flex-col gap-2">
-                            <label class="text-[13px] font-medium text-slate-600">Mode</label>
-                            <div id="imgModeGroup" class="flex flex-wrap gap-2">
-                                <button data-mode="text" class="mode-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition selected">✍️ Text-to-Image</button>
-                                <button data-mode="image" class="mode-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">🖼️ Image-to-Image</button>
+                        <!-- Reference image (optional i2i) -->
+                        <div class="gen-panel">
+                            <div class="gen-panel-head">
+                                <span>Image Reference <span class="gen-panel-optional">(Optional)</span></span>
+                                <span id="imgRefCount" class="gen-panel-count">0/1</span>
                             </div>
-                        </div>
-                        <div id="imgUploadWrap" class="hidden flex flex-col gap-2">
-                            <label class="text-[13px] font-medium text-slate-600">Source image</label>
                             <input type="file" id="imgSourceInput" accept="image/*" class="hidden" />
-                            <div id="imgUploadDropzone" class="cursor-pointer flex flex-col items-center justify-center gap-2 border-2 border-dashed border-slate-200 hover:border-beige-400 rounded-2xl py-6 px-4 text-center transition">
-                                <span class="text-[22px]">📤</span>
-                                <span class="text-[13px] text-slate-500">Click to upload your image</span>
+                            <div id="imgUploadDropzone" class="kling-upload-tile">
+                                <span class="kling-upload-plus">⊕</span>
                             </div>
-                            <div id="imgSourcePreviewWrap" class="hidden relative w-fit">
-                                <img id="imgSourcePreview" class="max-h-48 rounded-2xl border border-app" />
+                            <div id="imgSourcePreviewWrap" class="hidden relative w-fit mt-2">
+                                <img id="imgSourcePreview" class="max-h-40 rounded-2xl border border-app" />
                                 <button id="imgSourceRemoveBtn" title="Remove image" class="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-slate-800/80 hover:bg-slate-900 text-white text-[13px] flex items-center justify-center">✕</button>
                             </div>
                         </div>
-                        <div class="flex flex-col gap-2">
-                            <label id="imgPromptLabel" class="text-[13px] font-medium text-slate-600">Image description</label>
-                            <textarea id="imgPromptInput" rows="3" placeholder="e.g. a cat in glasses at sunset, cinematic" class="w-full resize-none bg-[#FBF8F5] border border-slate-200 rounded-2xl px-4 py-3 text-[14.5px] leading-6 outline-none focus-within:border-beige-400 placeholder:text-slate-400"></textarea>
+
+                        <!-- Prompt -->
+                        <div class="gen-panel">
+                            <textarea id="imgPromptInput" rows="5" placeholder="You can directly describe the image you want to generate…" class="kling-prompt-textarea"></textarea>
                         </div>
+
+                        <!-- Size -->
+                        <div class="flex flex-col gap-2">
+                            <label class="text-[13px] font-medium text-slate-600">Size</label>
+                            <div id="imgSizeGroup" class="flex flex-wrap gap-2">
+                                <button data-size="1K" class="size-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">1K</button>
+                                <button data-size="2K" class="size-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition selected">2K</button>
+                                <button data-size="3K" class="size-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">3K</button>
+                                <button data-size="4K" class="size-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">4K</button>
+                            </div>
+                        </div>
+
+                        <!-- Ratio -->
                         <div class="flex flex-col gap-2">
                             <label class="text-[13px] font-medium text-slate-600">Aspect ratio</label>
                             <div id="imgRatioGroup" class="flex flex-wrap gap-2">
-                                <button data-ratio="1:1" data-size="1024x1024" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition selected">1:1</button>
-                                <button data-ratio="16:9" data-size="1280x720" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">16:9</button>
-                                <button data-ratio="9:16" data-size="720x1280" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">9:16</button>
-                                <button data-ratio="4:3" data-size="1024x768" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">4:3</button>
-                                <button data-ratio="3:4" data-size="768x1024" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">3:4</button>
+                                <button data-ratio="1:1" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition selected">1:1</button>
+                                <button data-ratio="3:4" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">3:4</button>
+                                <button data-ratio="4:3" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">4:3</button>
+                                <button data-ratio="16:9" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">16:9</button>
+                                <button data-ratio="9:16" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">9:16</button>
+                                <button data-ratio="2:3" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">2:3</button>
+                                <button data-ratio="3:2" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">3:2</button>
+                                <button data-ratio="21:9" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">21:9</button>
                             </div>
                         </div>
+
                         <div class="flex flex-col gap-2">
                             <label class="text-[13px] font-medium text-slate-600">Price</label>
                             <div class="flex gap-4 p-3 bg-beige-100 rounded-xl text-center">
@@ -811,86 +837,121 @@
             <section id="view-gen-video" class="hidden flex-1 flex-col min-h-0">
                 <div class="flex items-center justify-between px-4 md:px-8 py-5 border-b border-app shrink-0">
                     <div>
-                        <h1 id="vidTabTitle" class="text-[17px] font-semibold tracking-tight">Text-to-Video</h1>
-                        <p id="vidTabSubtitle" class="text-[12.5px] text-slate-400">Generate videos from text with settings</p>
+                        <h1 class="text-[17px] font-semibold tracking-tight">AI Video Generation</h1>
+                        <p class="text-[12.5px] text-slate-400">Generate videos from text with settings</p>
                     </div>
                 </div>
                 <div class="flex-1 overflow-y-auto px-4 md:px-8 py-6">
                     <div class="gen-two-col">
-                    <div class="max-w-2xl mx-auto flex flex-col gap-5 gen-form-col">
+                    <div class="max-w-2xl mx-auto flex flex-col gap-4 gen-form-col">
 
-                        <div class="flex flex-col gap-2">
-                            <label class="text-[13px] font-medium text-slate-600">Model</label>
-                            <div id="vidModelDropdown" class="model-dropdown">
-                                <button type="button" id="vidModelDropdownBtn" class="model-dropdown-btn">
-                                    <span class="model-dropdown-btn-left">
-                                        <span class="model-dropdown-logo"><img id="vidModelDropdownLogo" src="img/agnesvid.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🎬';"></span>
-                                        <span class="model-dropdown-btn-text">
-                                            <span id="vidModelDropdownName" class="model-dropdown-name">Agnes Video 2.5</span>
-                                            <span id="vidModelDropdownTags" class="model-dropdown-tags"><span class="model-tag">i2v</span><span class="model-tag">t2v</span></span>
-                                        </span>
+                        <!-- Model picker (single model today, dropdown kept for future models) -->
+                        <div id="vidModelDropdown" class="model-dropdown">
+                            <button type="button" id="vidModelDropdownBtn" class="model-dropdown-btn">
+                                <span class="model-dropdown-btn-left">
+                                    <span class="model-dropdown-logo"><img id="vidModelDropdownLogo" src="img/agnesvid25.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🎬';"></span>
+                                    <span class="model-dropdown-btn-text">
+                                        <span id="vidModelDropdownName" class="model-dropdown-name">Agnes Video 2.5 Flash</span>
+                                        <span id="vidModelDropdownTags" class="model-dropdown-tags"><span class="model-tag">i2v</span><span class="model-tag">t2v</span></span>
                                     </span>
-                                    <span class="model-dropdown-arrow">▾</span>
+                                </span>
+                                <span class="model-dropdown-arrow">▾</span>
+                            </button>
+                            <div id="vidModelDropdownMenu" class="model-dropdown-menu hidden">
+                                <button type="button" data-model="agnes-video-2.5-flash" class="model-dropdown-option selected">
+                                    <span class="model-dropdown-logo"><img src="img/agnesvid25.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🎬';"></span>
+                                    <span class="model-dropdown-option-text">
+                                        <span class="model-dropdown-name">Agnes Video 2.5 Flash</span>
+                                        <span class="model-dropdown-tags"><span class="model-tag">i2v</span><span class="model-tag">t2v</span></span>
+                                        <span class="model-dropdown-desc">4–12 seconds, 720P</span>
+                                    </span>
                                 </button>
-                                <div id="vidModelDropdownMenu" class="model-dropdown-menu hidden">
-                                    <button type="button" data-model="agnes" class="model-dropdown-option selected">
-                                        <span class="model-dropdown-logo"><img src="img/agnesvid.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='🎬';"></span>
-                                        <span class="model-dropdown-option-text">
-                                            <span class="model-dropdown-name">Agnes Video 2.5</span>
-                                            <span class="model-dropdown-tags"><span class="model-tag">i2v</span><span class="model-tag">t2v</span></span>
-                                            <span class="model-dropdown-desc">5 or 10 seconds</span>
-                                        </span>
-                                    </button>
-                                    <button type="button" data-model="ltx" class="model-dropdown-option">
-                                        <span class="model-dropdown-logo"><img src="img/ltx.png" alt="" onerror="this.style.display='none'; this.parentElement.textContent='⚡';"></span>
-                                        <span class="model-dropdown-option-text">
-                                            <span class="model-dropdown-name">LTX-2.5 Fast</span>
-                                            <span class="model-dropdown-tags"><span class="model-tag">i2v</span><span class="model-tag">t2v</span></span>
-                                            <span class="model-dropdown-desc">Fast, 5 seconds</span>
-                                        </span>
-                                    </button>
+                            </div>
+                        </div>
+
+                        <!-- Keyframes: first / last frame -->
+                        <div class="gen-panel">
+                            <div class="gen-panel-head">
+                                <span>Start &amp; End Frames <span class="gen-panel-optional">(Optional)</span></span>
+                            </div>
+                            <div class="kling-keyframe-row">
+                                <div class="kling-keyframe-slot">
+                                    <input type="file" id="vidFirstFrameInput" accept="image/*" class="hidden" />
+                                    <div id="vidFirstFrameDropzone" class="kling-upload-tile kling-keyframe-tile">
+                                        <span class="kling-upload-plus">⊕</span>
+                                        <span class="kling-keyframe-label">First frame</span>
+                                    </div>
+                                    <div id="vidFirstFramePreviewWrap" class="hidden relative w-fit mt-2">
+                                        <img id="vidFirstFramePreview" class="max-h-28 rounded-2xl border border-app" />
+                                        <button id="vidFirstFrameRemoveBtn" class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-slate-800/80 hover:bg-slate-900 text-white text-[11px] flex items-center justify-center">✕</button>
+                                    </div>
+                                </div>
+                                <div class="kling-keyframe-slot">
+                                    <input type="file" id="vidLastFrameInput" accept="image/*" class="hidden" />
+                                    <div id="vidLastFrameDropzone" class="kling-upload-tile kling-keyframe-tile">
+                                        <span class="kling-upload-plus">⊕</span>
+                                        <span class="kling-keyframe-label">Last frame</span>
+                                    </div>
+                                    <div id="vidLastFramePreviewWrap" class="hidden relative w-fit mt-2">
+                                        <img id="vidLastFramePreview" class="max-h-28 rounded-2xl border border-app" />
+                                        <button id="vidLastFrameRemoveBtn" class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-slate-800/80 hover:bg-slate-900 text-white text-[11px] flex items-center justify-center">✕</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        <div class="flex flex-col gap-2">
-                            <label class="text-[13px] font-medium text-slate-600">Mode</label>
-                            <div id="vidModeGroup" class="flex flex-wrap gap-2">
-                                <button data-mode="text" class="mode-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition selected">✍️ Text-to-Video</button>
-                                <button data-mode="image" class="mode-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">🖼️ Image-to-Video</button>
+                        <!-- Prompt -->
+                        <div class="gen-panel">
+                            <textarea id="vidPromptInput" rows="4" placeholder="e.g. a dog running on the beach at sunset, cinematic" class="kling-prompt-textarea"></textarea>
+                        </div>
+
+                        <!-- Reference images (up to 5) -->
+                        <div class="gen-panel">
+                            <div class="gen-panel-head">
+                                <span>Reference Images <span class="gen-panel-optional">(Optional)</span></span>
+                                <span id="vidRefCount" class="gen-panel-count">0/5</span>
+                            </div>
+                            <input type="file" id="vidReferenceInput" accept="image/*" multiple class="hidden" />
+                            <div class="kling-thumb-row" id="vidReferenceRow">
+                                <div id="vidReferenceDropzone" class="kling-upload-tile kling-thumb-tile">
+                                    <span class="kling-upload-plus">⊕</span>
+                                </div>
                             </div>
                         </div>
-                        <div id="vidUploadWrap" class="hidden flex flex-col gap-2">
-                            <label class="text-[13px] font-medium text-slate-600">Source image</label>
-                            <input type="file" id="vidSourceInput" accept="image/*" class="hidden" />
-                            <div id="vidUploadDropzone" class="cursor-pointer flex flex-col items-center justify-center gap-2 border-2 border-dashed border-slate-200 hover:border-beige-400 rounded-2xl py-6 px-4 text-center transition">
-                                <span class="text-[22px]">📤</span>
-                                <span class="text-[13px] text-slate-500">Click to upload your image</span>
+
+                        <!-- Custom audio (up to 3) -->
+                        <div class="gen-panel">
+                            <div class="gen-panel-head">
+                                <span>Custom Audio <span class="gen-panel-optional">(Optional)</span></span>
+                                <span id="vidAudioCount" class="gen-panel-count">0/3</span>
                             </div>
-                            <div id="vidSourcePreviewWrap" class="hidden relative w-fit">
-                                <img id="vidSourcePreview" class="max-h-48 rounded-2xl border border-app" />
-                                <button id="vidSourceRemoveBtn" title="Remove image" class="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-slate-800/80 hover:bg-slate-900 text-white text-[13px] flex items-center justify-center">✕</button>
-                            </div>
+                            <input type="file" id="vidAudioInput" accept="audio/*" multiple class="hidden" />
+                            <button type="button" id="vidAudioAddBtn" class="kling-audio-add-btn">
+                                <span>🎵</span> Add audio track
+                            </button>
+                            <div id="vidAudioList" class="kling-audio-list"></div>
                         </div>
-                        <div class="flex flex-col gap-2">
-                            <label id="vidPromptLabel" class="text-[13px] font-medium text-slate-600">Video description</label>
-                            <textarea id="vidPromptInput" rows="3" placeholder="e.g. a dog running on the beach at sunset, cinematic" class="w-full resize-none bg-[#FBF8F5] border border-slate-200 rounded-2xl px-4 py-3 text-[14.5px] leading-6 outline-none focus-within:border-beige-400 placeholder:text-slate-400"></textarea>
-                        </div>
+
+                        <!-- Aspect ratio -->
                         <div class="flex flex-col gap-2">
                             <label class="text-[13px] font-medium text-slate-600">Aspect ratio</label>
                             <div id="vidRatioGroup" class="flex flex-wrap gap-2">
-                                <button data-ratio="16:9" data-dims="1152x768" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition selected">16:9</button>
-                                <button data-ratio="9:16" data-dims="768x1152" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">9:16</button>
-                                <button data-ratio="1:1" data-dims="960x960" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">1:1</button>
+                                <button data-ratio="16:9" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition selected">16:9</button>
+                                <button data-ratio="9:16" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">9:16</button>
+                                <button data-ratio="1:1" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">1:1</button>
+                                <button data-ratio="4:3" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">4:3</button>
+                                <button data-ratio="3:4" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">3:4</button>
+                                <button data-ratio="21:9" class="ratio-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">21:9</button>
                             </div>
                         </div>
+
+                        <!-- Duration slider 4-12s -->
                         <div class="flex flex-col gap-2">
-                            <label class="text-[13px] font-medium text-slate-600">Duration</label>
-                            <div id="vidDurationGroup" class="flex flex-wrap gap-2">
-                                <button data-duration="5" class="duration-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition selected">5 sec</button>
-                                <button data-duration="10" class="duration-btn px-4 py-2 rounded-xl text-[13px] font-medium border border-slate-200 hover:bg-beige-100 transition">10 sec</button>
-                            </div>
+                            <label class="text-[13px] font-medium text-slate-600">Duration: <span id="vidDurationValue">5</span>s</label>
+                            <input type="range" id="vidDurationSlider" min="4" max="12" step="1" value="5" class="kling-slider" />
+                            <div class="kling-slider-ticks"><span>4s</span><span>12s</span></div>
                         </div>
+
                         <div class="flex flex-col gap-2">
                             <label class="text-[13px] font-medium text-slate-600">Price</label>
                             <div class="flex gap-4 p-3 bg-beige-100 rounded-xl text-center">
@@ -1417,7 +1478,7 @@
             }
 
             window.addEventListener('load', boot);
-            })();
+        })();
     </script>
 
     <!-- ============ HOME TAB SHOWCASE (decorative sample content) ============ -->

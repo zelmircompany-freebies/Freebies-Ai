@@ -899,16 +899,200 @@
         }
         .ratio-btn,
         .duration-btn,
+        .size-btn,
         .mode-btn {
             color: var(--text-secondary);
             background: #ffffff;
         }
         .ratio-btn.selected,
         .duration-btn.selected,
+        .size-btn.selected,
         .mode-btn.selected {
             background: var(--accent-active);
             border-color: var(--accent);
             color: #B45F13;
+        }
+
+        /* ---- Kling-style generation panels (image/video forms) ---- */
+        .gen-panel {
+            background: #fff;
+            border: 1.5px solid var(--border-app, #eee);
+            border-radius: 18px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .gen-panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+        .gen-panel-optional {
+            font-weight: 500;
+            color: var(--text-secondary);
+            font-size: 12px;
+        }
+        .gen-panel-count {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .kling-prompt-textarea {
+            width: 100%;
+            resize: none;
+            border: none;
+            outline: none;
+            background: transparent;
+            font-size: 14.5px;
+            line-height: 1.5;
+            color: var(--text-main);
+            min-height: 90px;
+        }
+        .kling-prompt-textarea::placeholder {
+            color: var(--text-secondary);
+        }
+        .kling-upload-tile {
+            width: 92px;
+            height: 92px;
+            border-radius: 16px;
+            border: 1.5px dashed var(--border-app, #ddd);
+            background: var(--panel-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 4px;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+        .kling-upload-tile:hover {
+            border-color: var(--accent);
+            background: var(--accent-active);
+        }
+        .kling-upload-plus {
+            font-size: 22px;
+            color: var(--text-secondary);
+            line-height: 1;
+        }
+        .kling-keyframe-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .kling-keyframe-slot {
+            display: flex;
+            flex-direction: column;
+        }
+        .kling-keyframe-tile {
+            width: 110px;
+            height: 110px;
+        }
+        .kling-keyframe-label {
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .kling-thumb-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .kling-thumb-tile {
+            width: 76px;
+            height: 76px;
+            border-radius: 14px;
+        }
+        .kling-thumb-item {
+            position: relative;
+            width: 76px;
+            height: 76px;
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1.5px solid var(--border-app);
+        }
+        .kling-thumb-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .kling-thumb-remove {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            border: none;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        .kling-audio-add-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            align-self: flex-start;
+            padding: 9px 16px;
+            border-radius: 12px;
+            border: 1.5px dashed var(--border-app);
+            background: var(--panel-bg);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+        }
+        .kling-audio-add-btn:hover {
+            border-color: var(--accent);
+        }
+        .kling-audio-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .kling-audio-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 12px;
+            background: var(--panel-bg);
+            font-size: 12.5px;
+            color: var(--text-main);
+        }
+        .kling-audio-item-name {
+            flex: 1;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .kling-audio-item-remove {
+            border: none;
+            background: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 13px;
+            padding: 2px 4px;
+        }
+        .kling-slider {
+            width: 100%;
+            accent-color: var(--accent);
+            height: 4px;
+        }
+        .kling-slider-ticks {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-secondary);
         }
 
         /* ---- Model picker: compact dropdown button + expandable menu ---- */
@@ -1779,6 +1963,22 @@
             background: #fff;
             border-top: 1px solid var(--border-app);
             padding: 10px 24px 10px 24px;
+        }
+        /* While the conversation is empty, the composer lives inside #emptyState
+           (centered on screen, Dola/Kling-style) and this bottom slot is emptied out
+           and visually collapsed so it doesn't leave a stray border/gap at the bottom. */
+        .chat-composer-v2.composer-slot-empty {
+            border-top: none;
+            padding: 0;
+            min-height: 0;
+        }
+        #chatComposerCenterSlot:empty {
+            display: none;
+        }
+        /* Slightly more prominent styling for the composer when it's centered on an
+           empty chat (Dola/Kling-style hero input) vs. docked at the bottom. */
+        #chatComposerCenterSlot .max-w-3xl {
+            box-shadow: 0 6px 24px rgba(0,0,0,0.06);
         }
         @media (max-width: 767px) {
             .chat-header-v2 {
