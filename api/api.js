@@ -49,11 +49,17 @@ async function callWithRetry(endpoint, payload, keyPool, maxAttempts = 6) {
       }
       if (!upstream.ok) {
         const errText = await upstream.text().catch(() => '');
+        // Log server-side only (Vercel function logs) — never sent to the client.
+        // 4xx errors (400/401/403/404...) are usually NOT transient — they mean the
+        // request itself is malformed or the key/model is wrong, so retrying with a
+        // different key won't help, but we still log every attempt for diagnosis.
+        console.error(`[callWithRetry] ${endpoint} -> ${upstream.status}: ${errText.slice(0, 500)}`);
         lastError = new Error(`Agnes error (${upstream.status}): ${errText.slice(0, 300)}`);
         continue;
       }
       return await upstream.json();
     } catch (err) {
+      console.error(`[callWithRetry] ${endpoint} network error:`, err.message);
       lastError = err;
     }
   }
@@ -78,6 +84,33 @@ function getAgnesKeyPool() {
 // and the agnes-image-2.5-flash example the user provided.
 const AGNES_IMAGE_MODELS = new Set(['agnes-image-2.5-flash', 'agnes-image-2.1-flash', 'agnes-image-2.0-flash']);
 
+/* ============ agnes-text (agnes-3.0-flash, main chat text model) ============
+   OpenAI-compatible chat completions, same auth/key pool as Agnes image/video.
+   Docs: https://www.agnes-ai.com/en/docs/agnes-30-flash */
+async function handleAgnesText(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  const AGNES_TEXT_URL = 'https://apihub.agnes-ai.com/v1/chat/completions';
+  const keyPool = getAgnesKeyPool();
+
+  if (!keyPool.length) return res.status(500).json({ error: 'AGNES_KEY is not configured on the server' });
+
+  const { messages, max_tokens } = req.body || {};
+  if (!messages) return res.status(400).json({ error: 'Missing "messages" in request body' });
+
+  try {
+    const data = await callWithRetry(AGNES_TEXT_URL, {
+      model: 'agnes-3.0-flash',
+      messages,
+      max_tokens: max_tokens || 800,
+    }, keyPool, 6);
+    return res.status(200).json(data);
+  } catch (err) {
+    console.error('[agnes-text] failed after retries:', err.message);
+    return res.status(502).json({ error: 'The AI model is temporarily unavailable.' });
+  }
+}
+
 async function handleAgnesImage(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -99,10 +132,10 @@ async function handleAgnesImage(req, res) {
       ratio: ratio || '1:1',
       extra_body: { response_format: 'url' },
     };
-    // i2i: Agnes expects an array of PUBLIC image URLs, not base64 — the client
-    // uploads to our own image-hosting endpoint first and sends the resulting URLs.
+    // i2i: Agnes expects an "images" array of PUBLIC image URLs, not base64 — the
+    // client uploads to our own image-hosting endpoint first and sends the URLs.
     if (Array.isArray(imageUrls) && imageUrls.length) {
-      payload.image = imageUrls;
+      payload.images = imageUrls;
     }
 
     const data = await callWithRetry(AGNES_IMAGE_URL, payload, keyPool);
@@ -121,10 +154,15 @@ async function handleAgnesImage(req, res) {
 
 /* ============ agnes-video (agnes-video-2.5-flash, replaces v2.0 and Pixazo LTX) ============
    Docs: https://www.agnes-ai.com/en/docs/agnes-video-25-flash
-   POST /v1/videos — seconds: "4".."12", mode: "text" | "image", size: "720P" only,
-   aspect_ratio: one of 21:9, 16:9, 4:3, 1:1, 3:4, 9:16. Optional: first/last keyframes,
-   up to 5 reference images, up to 3 custom audio tracks — all as PUBLIC URLs (the
-   client uploads to our own image-hosting first; see uploadBase64ToHosting on the client). */
+   POST /v1/videos — seconds: "4".."12" (string), size: "720P" only, aspect_ratio:
+   one of 21:9, 16:9, 4:3, 1:1, 3:4, 9:16. `mode` must be exactly one of:
+     - "text"      — prompt only, no media fields allowed
+     - "keyframe"  — first_frame and/or last_frame (image URLs), no images/audios/videos
+     - "reference" — images[] (<=5) and/or audios[] (<=3), no first_frame/last_frame/videos
+   These three modes are mutually exclusive — mixing keyframe and reference fields in
+   one request is invalid, so if both are supplied we prioritize reference (it carries
+   more information) and drop the keyframe fields.
+   Docs: https://www.agnes-ai.com/en/docs/agnes-video-25-flash */
 const AGNES_VIDEO_MODEL = 'agnes-video-2.5-flash';
 const AGNES_VIDEO_RATIOS = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
 
@@ -145,23 +183,24 @@ async function handleAgnesVideo(req, res) {
 
     const dur = Math.min(12, Math.max(4, Math.round(Number(seconds) || 5)));
     const ratio = AGNES_VIDEO_RATIOS.has(aspectRatio) ? aspectRatio : '16:9';
-    const hasKeyframe = !!(firstFrameUrl || lastFrameUrl);
+
+    const hasReference = (Array.isArray(referenceUrls) && referenceUrls.length) || (Array.isArray(audioUrls) && audioUrls.length);
+    const hasKeyframe = !hasReference && !!(firstFrameUrl || lastFrameUrl);
 
     const payload = {
       model: AGNES_VIDEO_MODEL,
       prompt,
       seconds: String(dur),
-      mode: hasKeyframe ? 'image' : 'text',
+      mode: hasReference ? 'reference' : (hasKeyframe ? 'keyframe' : 'text'),
       size: '720P',
       aspect_ratio: ratio,
     };
-    if (firstFrameUrl) payload.first_frame_url = firstFrameUrl;
-    if (lastFrameUrl) payload.last_frame_url = lastFrameUrl;
-    if (Array.isArray(referenceUrls) && referenceUrls.length) {
-      payload.reference_images = referenceUrls.slice(0, 5);
-    }
-    if (Array.isArray(audioUrls) && audioUrls.length) {
-      payload.audio_urls = audioUrls.slice(0, 3);
+    if (hasReference) {
+      if (Array.isArray(referenceUrls) && referenceUrls.length) payload.images = referenceUrls.slice(0, 5);
+      if (Array.isArray(audioUrls) && audioUrls.length) payload.audios = audioUrls.slice(0, 3);
+    } else if (hasKeyframe) {
+      if (firstFrameUrl) payload.first_frame = firstFrameUrl;
+      if (lastFrameUrl) payload.last_frame = lastFrameUrl;
     }
 
     const data = await callWithRetry(AGNES_VIDEO_URL, payload, keyPool, 6);
@@ -403,12 +442,17 @@ async function handleUploadMedia(req, res) {
     });
 
     if (!upstream.ok) {
+      const errText = await upstream.text().catch(() => '');
+      // Log server-side only (Vercel function logs). Common cause: the "media"
+      // bucket doesn't exist yet, or isn't set to Public, in the Supabase project.
+      console.error(`[upload-media] Supabase upload -> ${upstream.status}: ${errText.slice(0, 500)}`);
       return res.status(502).json({ error: 'Upload failed. Please try again.' });
     }
 
     const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${filename}`;
     return res.status(200).json({ url: publicUrl });
   } catch (err) {
+    console.error('[upload-media] error:', err.message);
     return res.status(502).json({ error: 'Upload failed. Please try again.' });
   }
 }
@@ -456,6 +500,7 @@ async function handlePollinationsImage(req, res) {
 
 /* ============ Роутер ============ */
 const ROUTES = {
+  'agnes-text': handleAgnesText,
   'agnes-image': handleAgnesImage,
   'agnes-video': handleAgnesVideo,
   'agnes-video-status': handleAgnesVideoStatus,
