@@ -62,6 +62,7 @@
                non-OpenRouter id handled separately (Google Gemini API, used as the ultimate
                fallback if every OpenRouter key/model fails). */
             const CHAT_MODELS = [
+                { id: "agnes-3.0-flash", name: "Agnes 3.0 Flash", logo: "img/agnestext30.png", modality: "vt2t", tags: ["popular", "best"] },
                 { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "NVIDIA: Nemotron 3 Ultra", logo: "img/NN3U.png", modality: "t2t", tags: ["best"] },
                 { id: "nvidia/nemotron-3.5-lightning:free", name: "NVIDIA: Nemotron 3.5 Lightning", logo: "img/NN3.5L.png", modality: "t2t", tags: ["new"] },
                 { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "NVIDIA: Nemotron 3 Super", logo: "img/NN3S.png", modality: "t2t", tags: [] },
@@ -2387,24 +2388,53 @@
                 return cleanText(content);
             }
 
+            // agnes-3.0-flash — routed through our own agnes-text proxy (same key pool as
+            // Agnes image/video), not OpenRouter. Also used as the fallback model when the
+            // person's selected model fails (replaces the old Gemini fallback).
+            async function callAgnesText(prompt, imageBase64 = null, mimeType = null) {
+                const userContent = imageBase64
+                    ? [
+                        { type: "text", text: prompt },
+                        { type: "image_url", image_url: { url: `data:${mimeType || 'image/png'};base64,${imageBase64}` } },
+                      ]
+                    : prompt;
+                const messages = [
+                    { role: "system", content: getSystemPrompt() },
+                    { role: "user", content: userContent },
+                ];
+                const res = await fetch('/api/api?action=agnes-text', {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ messages, max_tokens: 800 }),
+                });
+                if (!res.ok) throw new Error("The AI model is temporarily unavailable.");
+                const data = await res.json();
+                const content = data?.choices?.[0]?.message?.content;
+                if (!content) throw new Error("Empty response from the model.");
+                return cleanText(content);
+            }
+
             async function callChatAI(prompt, imageBase64 = null, mimeType = null) {
                 const modelId = currentModel || DEFAULT_CHAT_MODEL_ID;
                 try {
                     if (modelId === 'gemini') {
                         return await callGemini(prompt, imageBase64, mimeType, true);
                     }
+                    if (modelId === 'agnes-3.0-flash') {
+                        return await callAgnesText(prompt, imageBase64, mimeType);
+                    }
                     return await callOpenrouterModel(modelId, prompt, imageBase64, mimeType);
                 } catch (err) {
-                    console.warn(`Model ${modelId} failed, falling back to Gemini:`, err);
+                    console.warn(`Model ${modelId} failed, falling back to Agnes 3.0 Flash:`, err);
                     // Last-resort fallback so the person always gets a reply, even if the
-                    // selected OpenRouter model (and every backup key for it) is down.
-                    if (modelId !== 'gemini') {
+                    // selected model (and every backup key for it) is down.
+                    if (modelId !== 'agnes-3.0-flash') {
                         try {
-                            return await callGemini(prompt, imageBase64, mimeType, true);
+                            return await callAgnesText(prompt, imageBase64, mimeType);
                         } catch (err2) {
-                            console.warn('Gemini fallback also failed:', err2);
-                            // Both the chosen model and the Gemini fallback failed — show one
-                            // clean, friendly message instead of a raw/technical error string.
+                            console.warn('Agnes 3.0 Flash fallback also failed:', err2);
+                            // Both the chosen model and the fallback failed — show one clean,
+                            // friendly message instead of a raw/technical error string.
                             throw new Error("The AI is temporarily unavailable. Please try again in a moment, or switch models in Settings.");
                         }
                     }

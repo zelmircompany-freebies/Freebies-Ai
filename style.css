@@ -1286,10 +1286,26 @@
             gap: 32px;
             max-width: 1100px;
             margin: 0 auto;
+            width: 100%;
+            min-width: 0;
         }
         .gen-form-col {
             max-width: none;
             flex-shrink: 0;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+        /* Defensive fix for mobile horizontal overflow: textareas and other flex
+           children can ignore their parent's width because of the default
+           min-width:auto on flex items — this resets that everywhere in the
+           generation forms so nothing can push the layout wider than the screen. */
+        .gen-form-col * {
+            min-width: 0;
+            box-sizing: border-box;
+        }
+        #view-gen-image, #view-gen-video {
+            overflow-x: hidden;
         }
         .gen-result-col {
             flex: 1;
