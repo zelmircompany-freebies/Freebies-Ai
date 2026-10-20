@@ -66,11 +66,21 @@ async function callWithRetry(endpoint, payload, keyPool, maxAttempts = 6) {
   throw lastError || new Error('All API keys exhausted.');
 }
 
+// Strips anything that isn't a plain printable ASCII character. API keys are always
+// plain ASCII — but env vars pasted from a chat app, PDF, or Word doc can carry
+// invisible Unicode characters (e.g. U+200E LEFT-TO-RIGHT MARK) that .trim() does NOT
+// remove. Those break fetch()'s Authorization header with a cryptic ByteString error
+// ("Cannot convert argument to a ByteString...") that has nothing to do with the API
+// itself — this sanitizer prevents that entire class of bug.
+function sanitizeKey(key) {
+  return (key || '').replace(/[^\x20-\x7E]/g, '').trim();
+}
+
 function getAgnesKeyPool() {
-  const AGNES_KEY = process.env.AGNES_KEY;
+  const AGNES_KEY = sanitizeKey(process.env.AGNES_KEY);
   const AGNES_BACKUP_KEYS = (process.env.AGNES_BACKUP_KEYS || '')
     .split(',')
-    .map(k => k.trim())
+    .map(sanitizeKey)
     .filter(Boolean);
   return AGNES_KEY ? [AGNES_KEY, ...AGNES_BACKUP_KEYS] : [];
 }
@@ -130,7 +140,7 @@ async function handleAgnesImage(req, res) {
       prompt,
       size: size || '2K',
       ratio: ratio || '1:1',
-      extra_body: { response_format: 'url' },
+      response_format: 'url',
     };
     // i2i: Agnes expects an "images" array of PUBLIC image URLs, not base64 — the
     // client uploads to our own image-hosting endpoint first and sends the URLs.
@@ -289,14 +299,14 @@ async function handleGemini(req, res) {
    the server just tries the next key in the pool — the client never sees which key
    failed or why, only the final successful response or a generic failure message. */
 function getOpenrouterKeyPool() {
-  const OPENROUTER_KEY = process.env.OPENROUTER_KEY;
+  const OPENROUTER_KEY = sanitizeKey(process.env.OPENROUTER_KEY);
   const OPENROUTER_BACKUP_KEYS = (process.env.OPENROUTER_BACKUP_KEYS || '')
     .split(',')
-    .map(k => k.trim())
+    .map(sanitizeKey)
     .filter(Boolean);
   // OPENROUTER_BASE_KEY (formerly reserved for the RU/Gemma route) now just joins
   // the same shared pool as an extra fallback key.
-  const OPENROUTER_BASE_KEY = process.env.OPENROUTER_BASE_KEY;
+  const OPENROUTER_BASE_KEY = sanitizeKey(process.env.OPENROUTER_BASE_KEY);
   const pool = [];
   if (OPENROUTER_KEY) pool.push(OPENROUTER_KEY);
   pool.push(...OPENROUTER_BACKUP_KEYS);
